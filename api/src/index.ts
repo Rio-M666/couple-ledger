@@ -1,39 +1,31 @@
 import { Hono } from "hono";
 import type { Database } from "./db";
 import { safeInteger } from "./db";
-import { ApiError, invalid, normalizeUuid, notFound, object, uuid } from "./input";
+import { ApiError, normalizeUuid, notFound, uuid } from "./input";
+import { parseBody, requestDigest, reserveWrite, type CompleteWrite, type WriteRequest, type WriteResult } from "./idempotency";
+import { acceptInvite, issueInvite, previewInvite } from "./invites";
 import { replaceProjection } from "./ledger";
+import { archivePair, createPair, readMembers, requestRevival, resolveRevival, saveProfile } from "./lifecycle";
 import { lockPair, type CommandContext, type ExpenseRecord } from "./records";
 import { changePromiseStatus, createExpense, createSettlement, replaceTargets, setCanceled, updateExpense } from "./commands";
 
 export type { Database, Queryable } from "./db";
 
-type SuccessStatus = 200 | 201;
-type WriteResult = Record<string, unknown>;
-type RunCommand = (context: CommandContext, body: Record<string, unknown>, id: string) => Promise<WriteResult>;
-
-async function requestDigest(endpoint: string, body: Record<string, unknown>): Promise<string> {
-  const request = JSON.stringify([endpoint, body], (_key, value: unknown) => {
-    if (typeof value === "number" && !Number.isFinite(value)) invalid("JSON numbers must be finite");
-    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-      const fields = value as Record<string, unknown>;
-      return Object.fromEntries(Object.keys(fields).sort().map((key) => [key, fields[key]]));
-    }
-    return value;
-  });
-  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(request));
-  return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
+type LedgerCommand = (context: CommandContext, body: Record<string, unknown>, id: string) => Promise<Record<string, unknown>>;
 
 export function createApp(db: Database) {
+  const inviteSecret = process.env.INVITE_HMAC_SECRET;
+  if (!inviteSecret?.trim()) throw new Error("INVITE_HMAC_SECRET must be configured");
   const app = new Hono<{ Variables: { userId: string } }>();
 
-  app.use("/pairs/*", async (c, next) => {
-    const userId = normalizeUuid(c.req.header("x-auth-user-id"));
-    if (!userId) throw new ApiError(401, "unauthenticated", "A valid x-auth-user-id is required");
-    c.set("userId", userId);
-    await next();
-  });
+  for (const path of ["/pairs/*", "/invites/*", "/revival-requests/*", "/profile"]) {
+    app.use(path, async (c, next) => {
+      const userId = normalizeUuid(c.req.header("x-auth-user-id"));
+      if (!userId) throw new ApiError(401, "unauthenticated", "A valid x-auth-user-id is required");
+      c.set("userId", userId);
+      await next();
+    });
+  }
 
   app.onError((error, c) => {
     if (error instanceof ApiError) {
@@ -44,53 +36,38 @@ export function createApp(db: Database) {
   });
   app.notFound((c) => c.json({ error: { code: "not_found", message: "Resource not found" } }, 404));
 
-  function post(path: string, run: RunCommand, status: SuccessStatus = 200) {
+  function registerPost(
+    path: string, handle: (request: WriteRequest, complete: CompleteWrite) => ReturnType<CompleteWrite>,
+    options: { credentialBody?: boolean; noStore?: boolean } = {},
+  ) {
     app.post(path, async (c) => {
-      const pairId = uuid(c.req.param("pairId"), "pairId");
+      const pairId = path.includes(":pairId") ? uuid(c.req.param("pairId"), "pairId") : "";
       const id = path.includes(":id") ? uuid(c.req.param("id"), "id") : "";
       const userId = c.get("userId");
       const key = uuid(c.req.header("Idempotency-Key"), "Idempotency-Key");
-      const raw = await c.req.text();
-      let value: unknown = {};
-      if (raw.length > 0) {
-        try {
-          value = JSON.parse(raw);
-        } catch {
-          invalid("Request body must be valid JSON");
-        }
-      }
-      const body = object(value, "Request body");
+      const body = parseBody(await c.req.text());
       const endpoint = path.replace(":pairId", pairId).replace(":id", id);
-      const digest = await requestDigest(endpoint, body);
-
+      const digest = requestDigest(endpoint, body, options.credentialBody ? inviteSecret : undefined);
       const result = await db.transaction(async (tx) => {
-        const context = await lockPair(tx, pairId, userId);
-        const { rows: [reservation] } = await tx.query<{ id: string }>(
-          `insert into public.idempotency_keys (user_id, pair_id, request_key, endpoint, request_digest)
-           values ($1, $2, $3, $4, decode($5, 'hex'))
-           on conflict (user_id, request_key) do nothing returning id::text`,
-          [userId, pairId, key, endpoint, digest],
-        );
-        if (!reservation) {
-          const { rows: [cached] } = await tx.query<{
-            matches: boolean;
-            status: SuccessStatus | null;
-            body: string | null;
-          }>(
-            `select request_digest = decode($3, 'hex') as matches,
-                    response_status as status, response_body::text as body
-               from public.idempotency_keys where user_id = $1 and request_key = $2`,
-            [userId, key, digest],
-          );
-          if (!cached.matches) {
-            throw new ApiError(409, "idempotency_conflict", "The idempotency key was used for a different request");
-          }
-          if (cached.status === null || cached.body === null) {
-            throw new ApiError(409, "idempotency_conflict", "The request is already processing");
-          }
-          return { status: cached.status, body: cached.body };
-        }
+        const complete = await reserveWrite(tx, userId, key, endpoint, digest);
+        return handle({ tx, pairId, userId, id, body }, complete);
+      });
+      if (options.noStore) c.header("Cache-Control", "no-store");
+      return c.body(result.body, result.status, { "Content-Type": "application/json; charset=UTF-8" });
+    });
+  }
 
+  function post(
+    path: string, run: (request: WriteRequest) => Promise<WriteResult>,
+    options?: Parameters<typeof registerPost>[2],
+  ) {
+    registerPost(path, (request, complete) => complete(() => run(request)), options);
+  }
+
+  function ledgerPost(path: string, run: LedgerCommand, status: NonNullable<WriteResult["status"]> = 200) {
+    registerPost(path, async ({ tx, pairId, userId, id, body }, complete) => {
+      const context = await lockPair(tx, pairId, userId);
+      return complete(async () => {
         const data = await run(context, body, id);
         const netAYen = await replaceProjection(tx, pairId);
         const { rows: [pair] } = await tx.query<{ revision: string }>(
@@ -99,27 +76,42 @@ export function createApp(db: Database) {
         );
         const response = { ...data, ledgerRevision: safeInteger(pair.revision) };
         if ("netAYenBefore" in data) Object.assign(response, { netAYenAfter: netAYen });
-        const { rows: [completed] } = await tx.query<{ body: string }>(
-          `update public.idempotency_keys
-              set status = 'completed', response_status = $2, response_body = $3::jsonb, completed_at = clock_timestamp()
-            where id = $1 returning response_body::text as body`,
-          [reservation.id, status, JSON.stringify(response)],
-        );
-        return { status, body: completed.body };
+        return { status, pairId, data: response };
       });
-      return c.body(result.body, result.status, { "Content-Type": "application/json; charset=UTF-8" });
     });
   }
 
-  post("/pairs/:pairId/expenses", createExpense, 201);
-  post("/pairs/:pairId/expenses/:id/update", updateExpense);
-  post("/pairs/:pairId/settlements", createSettlement, 201);
+  ledgerPost("/pairs/:pairId/expenses", createExpense, 201);
+  ledgerPost("/pairs/:pairId/expenses/:id/update", updateExpense);
+  ledgerPost("/pairs/:pairId/settlements", createSettlement, 201);
   for (const action of ["cancel", "restore"] as const) {
-    post(`/pairs/:pairId/expenses/:id/${action}`, (context, _body, id) => setCanceled(context, id, "expense", action));
-    post(`/pairs/:pairId/settlements/:id/${action}`, (context, _body, id) => setCanceled(context, id, "settlement", action));
+    ledgerPost(`/pairs/:pairId/expenses/:id/${action}`, (context, _body, id) => setCanceled(context, id, "expense", action));
+    ledgerPost(`/pairs/:pairId/settlements/:id/${action}`, (context, _body, id) => setCanceled(context, id, "settlement", action));
   }
-  post("/pairs/:pairId/settlements/:id/targets", replaceTargets);
-  post("/pairs/:pairId/promises/:id/status", changePromiseStatus);
+  ledgerPost("/pairs/:pairId/settlements/:id/targets", replaceTargets);
+  ledgerPost("/pairs/:pairId/promises/:id/status", changePromiseStatus);
+
+  app.put("/profile", async (c) => {
+    return c.json(await saveProfile(db, c.get("userId"), parseBody(await c.req.text())));
+  });
+
+  post("/pairs", createPair);
+  post("/pairs/:pairId/invites", (request) => issueInvite(request, inviteSecret), { noStore: true });
+  post("/invites/accept", (request) => acceptInvite(request, inviteSecret), { credentialBody: true });
+  post("/pairs/:pairId/archive", archivePair);
+  post("/pairs/:pairId/revival-requests", requestRevival);
+  post("/revival-requests/:id/decide", resolveRevival);
+  post("/revival-requests/:id/cancel", (request) => resolveRevival(request, true));
+
+  app.get("/invites/preview", async (c) => {
+    c.header("Cache-Control", "no-store");
+    const { code, token } = c.req.query();
+    return c.json(await previewInvite(db, inviteSecret, { code, token }));
+  });
+
+  app.get("/pairs/:pairId/members", async (c) => {
+    return c.json(await readMembers(db, uuid(c.req.param("pairId"), "pairId"), c.get("userId")));
+  });
 
   app.get("/pairs/:pairId/balance", async (c) => {
     const pairId = uuid(c.req.param("pairId"), "pairId");

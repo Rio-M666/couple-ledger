@@ -39,10 +39,11 @@ export async function openDatabase() {
   return { pg, adapter };
 }
 
-export async function resetDatabase(pg: PGlite) {
+export async function resetDatabase(pg: PGlite, seedActivePairs = true) {
   await pg.exec("truncate public.pairs, auth.users restart identity cascade");
   await pg.transaction(async (tx) => {
     await tx.query("insert into auth.users (id) values ($1), ($2), ($3), ($4)", [userA, userB, otherUserA, otherUserB]);
+    if (!seedActivePairs) return;
     await tx.query(
       "insert into pairs (id, status, activated_at) values ($1, 'active', now()), ($2, 'active', now())",
       [pair, otherPair],

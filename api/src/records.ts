@@ -47,7 +47,8 @@ export async function findRecord<Row extends VersionedRecord>(
   return rows[0]?.record ?? notFound();
 }
 
-type Action = "create" | "update" | "cancel" | "restore";
+type Action = "create" | "update" | "cancel" | "restore" | "archive" | "revive";
+type Entity = "expense" | "settlement" | "promise" | "pair";
 
 export interface CommandContext {
   tx: Queryable;
@@ -94,16 +95,23 @@ export async function netBalance(tx: Queryable, pairId: string): Promise<number>
 
 export async function audit(
   { tx, pairId, actorSlot, members }: CommandContext,
-  entity: "expense" | "settlement" | "promise",
+  entity: Entity,
   id: string,
   action: Action,
   oldData: object | null,
   newData: object,
 ): Promise<void> {
+  await writeAudit(tx, pairId, members[actorSlot], entity, id, action, oldData, newData);
+}
+
+export async function writeAudit(
+  tx: Queryable, pairId: string, actorId: string | null, entity: Entity, id: string,
+  action: Action, oldData: object | null, newData: object,
+): Promise<void> {
   await tx.query(
     `insert into public.audit_logs (pair_id, actor_member_id, entity_type, entity_id, action, old_data, new_data)
      values ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
-    [pairId, members[actorSlot], entity, id, action, oldData && JSON.stringify(oldData), JSON.stringify(newData)],
+    [pairId, actorId, entity, id, action, oldData && JSON.stringify(oldData), JSON.stringify(newData)],
   );
 }
 
