@@ -1,6 +1,6 @@
 node_modules/
 .pgdata/
-codex-engine-run.log
+codex-*-run.log
 dist/
 .env*
 !.env.example
