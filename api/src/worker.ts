@@ -3,7 +3,8 @@ import { PostgresDatabase } from "./db-postgres";
 import { createApp } from "./index";
 
 type Bindings = {
-  DATABASE_URL: string;
+  DATABASE_URL?: string;
+  HYPERDRIVE?: { connectionString: string };
   INVITE_HMAC_SECRET: string;
   SUPABASE_URL: string;
 };
@@ -17,11 +18,14 @@ export default {
       return Response.json({ ok: true });
     }
 
-    if (!env.DATABASE_URL || !env.INVITE_HMAC_SECRET?.trim() || !env.SUPABASE_URL) {
+    const dbUrl = env.HYPERDRIVE?.connectionString ?? env.DATABASE_URL;
+    if (!dbUrl || !env.INVITE_HMAC_SECRET?.trim() || !env.SUPABASE_URL) {
       return Response.json({ error: { code: "configuration_error", message: "Backend configuration is incomplete" } }, { status: 500 });
     }
-    if (database?.url !== env.DATABASE_URL) {
-      database = { url: env.DATABASE_URL, client: new PostgresDatabase(env.DATABASE_URL, true) };
+    if (database?.url !== dbUrl) {
+      // Hyperdrive terminates TLS to the origin itself; the Worker-to-Hyperdrive
+      // leg is internal, so the driver must not negotiate TLS with it.
+      database = { url: dbUrl, client: new PostgresDatabase(dbUrl, true, env.HYPERDRIVE ? false : "require") };
     }
     if (auth?.url !== env.SUPABASE_URL) {
       auth = { url: env.SUPABASE_URL, verify: createSupabaseAuthenticator(env.SUPABASE_URL) };

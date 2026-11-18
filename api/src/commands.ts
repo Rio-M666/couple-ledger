@@ -239,7 +239,7 @@ export async function replaceTargets(context: CommandContext, body: Body, id: st
   const { rows: next } = await tx.query<{ target: Target }>(
     `insert into public.settlement_targets (pair_id, settlement_id, expense_id, target_amount_yen, priority)
      select $1, $2, t.expense_id, t.target_amount_yen, t.priority
-       from jsonb_to_recordset($3::jsonb) as t(expense_id uuid, target_amount_yen bigint, priority integer)
+       from jsonb_to_recordset($3::text::jsonb) as t(expense_id uuid, target_amount_yen bigint, priority integer)
      returning to_jsonb(settlement_targets) as target`,
     [pairId, id, JSON.stringify(targets)],
   );

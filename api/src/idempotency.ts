@@ -84,7 +84,7 @@ export async function reserveWrite(
     const { pairId, data, status = 200, replayData } = await run();
     const { rows: [completed] } = await tx.query<{ body: string }>(
       `update public.idempotency_keys
-          set status = 'completed', response_status = $2, response_body = $3::jsonb,
+          set status = 'completed', response_status = $2, response_body = $3::text::jsonb,
               completed_at = clock_timestamp(), pair_id = $4
         where id = $1 returning response_body::text as body`,
       [reservation.id, status, JSON.stringify(replayData ?? data), pairId],

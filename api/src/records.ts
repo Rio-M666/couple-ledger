@@ -110,7 +110,7 @@ export async function writeAudit(
 ): Promise<void> {
   await tx.query(
     `insert into public.audit_logs (pair_id, actor_member_id, entity_type, entity_id, action, old_data, new_data)
-     values ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb)`,
+     values ($1, $2, $3, $4, $5, $6::text::jsonb, $7::text::jsonb)`,
     [pairId, actorId, entity, id, action, oldData && JSON.stringify(oldData), JSON.stringify(newData)],
   );
 }

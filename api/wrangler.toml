@@ -2,3 +2,7 @@ name = "couple-ledger-api"
 main = "src/worker.ts"
 compatibility_date = "2026-11-17"
 compatibility_flags = ["nodejs_compat"]
+
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "8855fa8ab29341718637d45113de966c"

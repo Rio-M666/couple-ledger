@@ -69,7 +69,7 @@ export async function replaceProjection(tx: Queryable, pairId: string): Promise<
     await tx.query(
       `insert into public.settlement_allocations (pair_id, settlement_id, expense_id, amount_yen, source)
        select $1, a."settlementId", a."expenseId", a."amountYen", a.source
-         from jsonb_to_recordset($2::jsonb)
+         from jsonb_to_recordset($2::text::jsonb)
               as a("settlementId" uuid, "expenseId" uuid, "amountYen" bigint, source public.allocation_source)`,
       [pairId, JSON.stringify(ledger.settlementAllocations)],
     );
@@ -78,7 +78,7 @@ export async function replaceProjection(tx: Queryable, pairId: string): Promise<
     await tx.query(
       `insert into public.offset_allocations (pair_id, expense_a_id, expense_b_id, amount_yen)
        select $1, a."expenseAId", a."expenseBId", a."amountYen"
-         from jsonb_to_recordset($2::jsonb) as a("expenseAId" uuid, "expenseBId" uuid, "amountYen" bigint)`,
+         from jsonb_to_recordset($2::text::jsonb) as a("expenseAId" uuid, "expenseBId" uuid, "amountYen" bigint)`,
       [pairId, JSON.stringify(ledger.offsetAllocations)],
     );
   }

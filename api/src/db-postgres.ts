@@ -12,37 +12,45 @@ function queryable(sql: postgres.Sql | postgres.TransactionSql): Queryable {
 }
 
 export class PostgresDatabase implements Database {
-  private readonly sql: postgres.Sql;
+  private readonly shared: postgres.Sql;
   private queued = Promise.resolve();
 
-  constructor(connectionString: string, private readonly workerMode = false) {
-    this.sql = postgres(connectionString, {
+  constructor(
+    private readonly connectionString: string,
+    private readonly workerMode = false,
+    private readonly sslMode: "require" | false = "require",
+  ) {
+    this.shared = postgres(connectionString, {
       prepare: false,
-      ...(workerMode && { ssl: "require" }),
+      ...(workerMode && { ssl: sslMode }),
     });
   }
 
   query<Row>(text: string, params?: unknown[]) {
-    return this.run(() => queryable(this.sql).query<Row>(text, params));
+    return this.run((sql) => queryable(sql).query<Row>(text, params));
   }
 
   transaction<T>(run: (tx: Queryable) => Promise<T>): Promise<T> {
-    return this.run(async () => {
-      const { result } = await this.sql.begin("isolation level read committed", async (sql) => ({
-        result: await run(queryable(sql)),
+    return this.run(async (sql) => {
+      const { result } = await sql.begin("isolation level read committed", async (tx) => ({
+        result: await run(queryable(tx)),
       }));
       return result;
     });
   }
 
-  private run<T>(operation: () => Promise<T>): Promise<T> {
-    if (!this.workerMode) return operation();
-    // A Worker can reuse this client, but each TCP socket belongs to its request.
+  private run<T>(operation: (sql: postgres.Sql) => Promise<T>): Promise<T> {
+    if (!this.workerMode) return operation(this.shared);
+    // Workers: a TCP socket cannot outlive the request that opened it, so each
+    // operation gets a fresh client and ends it afterwards. (Ending the shared
+    // client instead would brick every later operation in the isolate.)
+    // Operations are serialized; Hyperdrive pools the real connections.
     const result = this.queued.then(async () => {
+      const sql = postgres(this.connectionString, { prepare: false, max: 1, ssl: this.sslMode });
       try {
-        return await operation();
+        return await operation(sql);
       } finally {
-        await this.sql.close();
+        await sql.end();
       }
     });
     this.queued = result.then(() => undefined, () => undefined);
