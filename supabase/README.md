@@ -27,3 +27,15 @@ Note: an earlier project created in Singapore (ref jblmgdstqmstjrnasxeq) was
 deleted the same day and replaced with this Tokyo project before any data or
 migrations were applied. The database password is held by the project owner
 only and is never recorded here.
+
+## Migration status (2026-11-18)
+
+- `20261118000000_initial_schema.sql` was applied to this project on
+  2026-11-18 through the dashboard SQL Editor in three sequential parts
+  (the Management API query endpoint runs read-only transactions and
+  rejects DDL with error 25006, even with `read_only: false`).
+- Verified after applying, through the Management API: 14 public tables,
+  RLS enabled on all 14, 12 policies, the `pair_balances` view, and the
+  pgcrypto extension. All 8 statements of
+  `docs/db-design-v0.1/002_integrity_checks.sql` were run individually and
+  returned 0 rows each.
