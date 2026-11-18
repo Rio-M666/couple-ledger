@@ -1,3 +1,5 @@
+import type { MemberSlot } from './types.ts';
+
 const yenFormat = new Intl.NumberFormat('ja-JP');
 const tokyoDateFormat = new Intl.DateTimeFormat('ja-JP', {
   timeZone: 'Asia/Tokyo',
@@ -22,6 +24,17 @@ export function formatYen(amount: number) {
 export function formatShortDate(date: string) {
   const [, month, day] = date.split('-');
   return `${Number(month)}/${Number(day)}`;
+}
+
+export function formatFullDate(date: string) {
+  const [year, month, day] = date.split('-');
+  const weekday = weekdayFormat.format(new Date(`${date}T00:00:00Z`));
+  return `${Number(year)}年${Number(month)}月${Number(day)}日（${weekday}）`;
+}
+
+export function balanceDirection(netAYen: number, viewerSlot: MemberSlot, partnerName: string) {
+  const payeeSlot = netAYen > 0 ? 'A' : 'B';
+  return viewerSlot === payeeSlot ? `${partnerName}があなたに` : `あなたが${partnerName}に`;
 }
 
 export function businessDate(now = new Date()) {

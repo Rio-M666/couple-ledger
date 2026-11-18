@@ -1,4 +1,5 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Link } from 'expo-router';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { expenseStatus, expenseStatusLabels, expenseTypeLabels } from '@/data/expense';
 import { formatShortDate, formatYen } from '@/data/format';
@@ -29,46 +30,48 @@ export function TimelineRow({
     : timelineLabels[item.kind];
 
   return (
-    <View style={[styles.row, !first && styles.rowDivider]}>
-      <View aria-hidden style={styles.marker}>
-        <View style={[styles.rail, first && styles.hiddenRail]} />
-        <View style={[styles.node, styles[item.kind], canceled && styles.canceledNode]} />
-        <View style={[styles.rail, last && styles.hiddenRail]} />
-      </View>
-      <View style={styles.details}>
-        <View style={styles.metadataLine}>
-          <Text style={styles.metadata}>{kindLabel}</Text>
-          {canceled && <Text style={styles.metadata}>取消済み</Text>}
-          {!canceled && item.kind === 'promise' && (
-            <Text style={styles.metadata}>{item.status === 'completed' ? '完了' : '未完了'}</Text>
-          )}
-          {!canceled && item.kind === 'expense' && item.expenseType === 'split' && (
-            <Text style={styles.metadata}>{expenseStatusLabels[expenseStatus(item)]}</Text>
-          )}
+    <Link href={{ pathname: '/record/[id]', params: { id: item.id } }} asChild>
+      <Pressable accessibilityRole="link" style={StyleSheet.flatten([styles.row, !first && styles.rowDivider])}>
+        <View aria-hidden style={styles.marker}>
+          <View style={[styles.rail, first && styles.hiddenRail]} />
+          <View style={[styles.node, styles[item.kind], canceled && styles.canceledNode]} />
+          <View style={[styles.rail, last && styles.hiddenRail]} />
         </View>
-        <Text style={[styles.body, canceled && styles.muted]}>{item.title}</Text>
-      </View>
-      {(showDate || item.kind !== 'promise') && (
-        <View style={styles.values}>
-          {showDate && <Text style={styles.metadata}>{formatShortDate(item.occurredOn)}</Text>}
-          {item.kind !== 'promise' && (
-            <Text style={[styles.amount, canceled && styles.muted]}>{formatYen(item.amountYen)}</Text>
-          )}
-          {item.kind === 'expense' && remainingPercent !== null && (
-            <View style={styles.remaining}>
-              <View
-                accessibilityRole="progressbar"
-                accessibilityLabel="相手負担の残額割合"
-                accessibilityValue={{ min: 0, max: 100, now: Math.round(remainingPercent) }}
-                style={styles.progressTrack}>
-                <View style={[styles.progressFill, { width: `${remainingPercent}%` }]} />
+        <View style={styles.details}>
+          <View style={styles.metadataLine}>
+            <Text style={styles.metadata}>{kindLabel}</Text>
+            {canceled && <Text style={styles.metadata}>取消済み</Text>}
+            {!canceled && item.kind === 'promise' && (
+              <Text style={styles.metadata}>{item.status === 'completed' ? '完了' : '未完了'}</Text>
+            )}
+            {!canceled && item.kind === 'expense' && item.expenseType === 'split' && (
+              <Text style={styles.metadata}>{expenseStatusLabels[expenseStatus(item)]}</Text>
+            )}
+          </View>
+          <Text style={[styles.body, canceled && styles.muted]}>{item.title}</Text>
+        </View>
+        {(showDate || item.kind !== 'promise') && (
+          <View style={styles.values}>
+            {showDate && <Text style={styles.metadata}>{formatShortDate(item.occurredOn)}</Text>}
+            {item.kind !== 'promise' && (
+              <Text style={[styles.amount, canceled && styles.muted]}>{formatYen(item.amountYen)}</Text>
+            )}
+            {item.kind === 'expense' && remainingPercent !== null && (
+              <View style={styles.remaining}>
+                <View
+                  accessibilityRole="progressbar"
+                  accessibilityLabel="相手負担の残額割合"
+                  accessibilityValue={{ min: 0, max: 100, now: Math.round(remainingPercent) }}
+                  style={styles.progressTrack}>
+                  <View style={[styles.progressFill, { width: `${remainingPercent}%` }]} />
+                </View>
+                <Text style={styles.metadata}>残り {formatYen(item.remainingYen)}</Text>
               </View>
-              <Text style={styles.metadata}>残り {formatYen(item.remainingYen)}</Text>
-            </View>
-          )}
-        </View>
-      )}
-    </View>
+            )}
+          </View>
+        )}
+      </Pressable>
+    </Link>
   );
 }
 

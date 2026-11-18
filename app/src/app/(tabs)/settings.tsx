@@ -1,6 +1,8 @@
 import { StyleSheet, Text, View } from 'react-native';
 
+import { SecondaryButton } from '@/components/controls';
 import { Screen } from '@/components/screen';
+import { resetOnboarding } from '@/data/home';
 import { useLedger } from '@/hooks/use-ledger';
 import { colors, layout, spacing, typography, useThemeScheme, type ColorTokens } from '@/theme';
 
@@ -28,6 +30,10 @@ export default function SettingsScreen() {
           </View>
         ))}
       </View>
+      <View style={styles.development}>
+        <Text accessibilityRole="header" style={styles.label}>連携フローを試す</Text>
+        <SecondaryButton label="最初から（未ログイン）" onPress={resetOnboarding} />
+      </View>
     </Screen>
   );
 }
@@ -38,6 +44,7 @@ function createStyles(color: ColorTokens) {
     label: { ...typography.small, color: color.inkMuted, marginBottom: spacing.sm },
     name: { ...typography.body, color: color.ink },
     item: { ...typography.body, color: color.inkMuted },
+    development: { paddingTop: spacing.md, borderTopColor: color.hairline, borderTopWidth: StyleSheet.hairlineWidth },
     row: {
       minHeight: layout.rowMinHeight,
       justifyContent: 'center',

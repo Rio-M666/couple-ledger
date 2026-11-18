@@ -1,5 +1,6 @@
-import { useId } from 'react';
+import { useId, useState } from 'react';
 import {
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -7,6 +8,7 @@ import {
   View,
   type StyleProp,
   type TextInputProps,
+  type TextStyle,
   type ViewStyle,
 } from 'react-native';
 
@@ -65,7 +67,7 @@ export function FieldInput({
   return (
     <View style={[styles.field, containerStyle]}>
       <Text style={styles.label}>{label}</Text>
-      <TextInput
+      <LedgerTextInput
         accessibilityLabel={label}
         aria-invalid={Boolean(error)}
         aria-describedby={error ? errorId : undefined}
@@ -77,6 +79,28 @@ export function FieldInput({
     </View>
   );
 }
+
+export function LedgerTextInput({ onFocus, onBlur, style, ...props }: TextInputProps) {
+  const styles = useControlStyles();
+  const [focused, setFocused] = useState(false);
+
+  return (
+    <TextInput
+      {...props}
+      onFocus={event => {
+        setFocused(true);
+        onFocus?.(event);
+      }}
+      onBlur={event => {
+        setFocused(false);
+        onBlur?.(event);
+      }}
+      style={[style, focused && styles.focusedInput, webInputStyle]}
+    />
+  );
+}
+
+const webInputStyle: TextStyle | undefined = Platform.OS === 'web' ? { outlineWidth: 0 } : undefined;
 
 export function FieldError({ message, id }: { message?: string; id?: string }) {
   const styles = useControlStyles();
@@ -95,6 +119,23 @@ export function PrimaryButton({ label, onPress }: { label: string; onPress: () =
       onPress={onPress}
       style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}>
       <Text style={styles.primaryLabel}>{label}</Text>
+    </Pressable>
+  );
+}
+
+export function SecondaryButton({ label, onPress, danger = false }: {
+  label: string;
+  onPress: () => void;
+  danger?: boolean;
+}) {
+  const styles = useControlStyles();
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      onPress={onPress}
+      style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}>
+      <Text style={[styles.body, danger && styles.dangerLabel]}>{label}</Text>
     </Pressable>
   );
 }
@@ -139,7 +180,9 @@ function createStyles(color: ColorTokens) {
       paddingVertical: spacing.sm,
     },
     invalidInput: { borderColor: color.danger },
+    focusedInput: { borderColor: color.accent },
     error: { ...typography.small, color: color.danger },
+    dangerLabel: { color: color.danger },
     choices: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
     choice: {
       minHeight: layout.choiceHeight,
@@ -168,6 +211,17 @@ function createStyles(color: ColorTokens) {
       ...typography.body,
       fontWeight: typography.heading.fontWeight,
       color: color.accentInk,
+    },
+    secondaryButton: {
+      alignSelf: 'flex-start',
+      justifyContent: 'center',
+      minHeight: spacing.xxxl,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.sm,
+      borderRadius: layout.buttonRadius,
+      backgroundColor: color.surface,
+      borderColor: color.hairline,
+      borderWidth: StyleSheet.hairlineWidth,
     },
     pressed: { opacity: 0.8 },
     disclosure: {

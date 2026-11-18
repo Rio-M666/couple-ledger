@@ -2,10 +2,10 @@ import { Link, router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { PrimaryButton, useControlStyles } from '@/components/controls';
+import { PrimaryButton, SecondaryButton, useControlStyles } from '@/components/controls';
 import { Screen } from '@/components/screen';
 import { LoadingRows, TimelineRow } from '@/components/timeline-row';
-import { formatYen } from '@/data/format';
+import { balanceDirection, formatYen } from '@/data/format';
 import { loadHome, type HomeScenario } from '@/data/home';
 import type { HomeData } from '@/data/types';
 import { useLedger } from '@/hooks/use-ledger';
@@ -72,10 +72,7 @@ function HomeContent({ data }: { data: HomeData }) {
   const { viewer, partner, balance, timeline } = data;
   const netAYen = balance.netAYen;
   const isSettled = netAYen === 0;
-  const payeeSlot = netAYen > 0 ? 'A' : 'B';
-  const direction = viewer.slot === payeeSlot
-    ? `${partner.displayName}があなたに`
-    : `あなたが${partner.displayName}に`;
+  const direction = balanceDirection(netAYen, viewer.slot, partner.displayName);
   const amount = formatYen(Math.abs(netAYen));
   const recent = timeline.slice(0, 4);
 
@@ -84,8 +81,8 @@ function HomeContent({ data }: { data: HomeData }) {
       <View>
         <View style={styles.pairHeader}>
           <View aria-hidden style={styles.initials}>
-            <View style={styles.initial}><Text style={styles.body}>{viewer.displayName[0]}</Text></View>
-            <View style={styles.initial}><Text style={styles.muted}>{partner.displayName[0]}</Text></View>
+            <View style={styles.initial}><Text style={styles.body}>{Array.from(viewer.displayName)[0]}</Text></View>
+            <View style={styles.initial}><Text style={styles.muted}>{Array.from(partner.displayName)[0]}</Text></View>
           </View>
           <Text style={styles.body}>{viewer.displayName} と {partner.displayName}</Text>
         </View>
@@ -104,7 +101,10 @@ function HomeContent({ data }: { data: HomeData }) {
             </>
           )}
         </View>
-        <PrimaryButton label="支払いを追加" onPress={() => router.push('/expense/new')} />
+        <View style={styles.recordActions}>
+          <PrimaryButton label="支払いを追加" onPress={() => router.push('/expense/new')} />
+          <SecondaryButton label="精算する" onPress={() => router.push('/settlement/new')} />
+        </View>
       </View>
       {recent.length > 0 && (
         <View>
@@ -155,6 +155,7 @@ function createStyles(color: ColorTokens) {
     note: { ...typography.body, ...typography.numbers, color: color.inkMuted },
     error: { ...typography.body, color: color.danger },
     actions: { gap: spacing.xl },
+    recordActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
     retry: {
       alignSelf: 'flex-start',
       justifyContent: 'center',

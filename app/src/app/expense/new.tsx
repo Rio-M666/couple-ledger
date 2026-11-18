@@ -1,9 +1,10 @@
-import { router } from 'expo-router';
-import { useId, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useRef, useState } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 
-import { ChoiceGroup, Disclosure, FieldError, FieldInput, PrimaryButton } from '@/components/controls';
-import { Screen } from '@/components/screen';
+import { AmountInput } from '@/components/amount-input';
+import { ChoiceGroup, Disclosure, FieldError, FieldInput, PrimaryButton, SecondaryButton } from '@/components/controls';
+import { Screen, SheetHeader } from '@/components/screen';
 import {
   defaultExpenseTitle,
   expenseDateError,
@@ -15,9 +16,9 @@ import {
   promiseDueDateError,
   yenInputError,
 } from '@/data/expense';
-import { businessDate, formatShortDate, formatYen, formatYenDigits } from '@/data/format';
-import { createExpense } from '@/data/home';
-import type { ExpenseType, MemberSlot, NewExpense } from '@/data/types';
+import { balanceDirection, businessDate, formatShortDate, formatYen } from '@/data/format';
+import { createExpense, linkedPromise, previewExpenseEdit, updateExpense, type RecordVersion } from '@/data/home';
+import type { ExpenseRecord, ExpenseType, MemberSlot, NewExpense } from '@/data/types';
 import { useLedger } from '@/hooks/use-ledger';
 import { colors, layout, spacing, typography, useThemeScheme, type ColorTokens } from '@/theme';
 
@@ -30,26 +31,54 @@ const shareModes = [{ value: 'half', label: '半額' }, { value: 'custom', label
 const dateInputProps = { placeholder: 'YYYY-MM-DD', autoCapitalize: 'none', autoCorrect: false } as const;
 
 export default function NewExpenseScreen() {
-  const scheme = useThemeScheme();
-  const styles = stylesByScheme[scheme];
-  const { viewer, partner } = useLedger();
+  const { edit } = useLocalSearchParams<{ edit?: string }>();
+  const { timeline } = useLedger();
+  const expense = timeline.find(item => item.kind === 'expense' && item.id === edit);
+
+  if (edit && (!expense || expense.kind !== 'expense' || expense.canceledAt)) {
+    return (
+      <Screen sheet>
+        <SheetHeader title="支払いを編集" onClose={closeExpense} />
+        <FieldError message="この支払いは編集できません。" />
+      </Screen>
+    );
+  }
+  return <ExpenseForm key={edit ?? 'new'} expense={expense?.kind === 'expense' ? expense : undefined} />;
+}
+
+function closeExpense() {
+  if (router.canGoBack()) router.back();
+  else router.replace('/');
+}
+
+type EditReview = {
+  input: NewExpense;
+  expected: RecordVersion;
+  impact: ReturnType<typeof previewExpenseEdit>;
+};
+
+function ExpenseForm({ expense }: { expense?: ExpenseRecord }) {
+  const styles = stylesByScheme[useThemeScheme()];
+  const { viewer, partner, timeline, audit, balance } = useLedger();
   const members = [viewer, partner].map(member => ({ value: member.slot, label: member.displayName }));
-  const [amountText, setAmountText] = useState('');
-  const [amountFocused, setAmountFocused] = useState(false);
-  const [title, setTitle] = useState(defaultExpenseTitle);
-  const [payer, setPayer] = useState<MemberSlot>(viewer.slot);
-  const [expenseType, setExpenseType] = useState<ExpenseType>('split');
-  const [shareMode, setShareMode] = useState<(typeof shareModes)[number]['value']>('half');
-  const [shareText, setShareText] = useState('');
-  const [date, setDate] = useState(businessDate);
-  const [promiseBody, setPromiseBody] = useState('');
-  const [dueDate, setDueDate] = useState('');
-  const [expanded, setExpanded] = useState(false);
+  const promise = expense && linkedPromise(timeline, expense.id);
+  const [amountText, setAmountText] = useState(expense ? String(expense.amountYen) : '');
+  const [title, setTitle] = useState(expense?.title ?? defaultExpenseTitle);
+  const [payer, setPayer] = useState<MemberSlot>(expense?.payerSlot ?? viewer.slot);
+  const [expenseType, setExpenseType] = useState<ExpenseType>(expense?.expenseType ?? 'split');
+  const [shareMode, setShareMode] = useState<(typeof shareModes)[number]['value']>(
+    expense?.expenseType === 'split' && expense.counterpartyShareYen !== halfShare(expense.amountYen) ? 'custom' : 'half',
+  );
+  const [shareText, setShareText] = useState(expense ? String(expense.counterpartyShareYen) : '');
+  const [date, setDate] = useState(() => expense?.occurredOn ?? businessDate());
+  const [promiseBody, setPromiseBody] = useState(promise?.title ?? '');
+  const [dueDate, setDueDate] = useState(promise?.dueOn ?? '');
+  const [expanded, setExpanded] = useState(Boolean(expense));
   const [submitted, setSubmitted] = useState(false);
   const [balanceError, setBalanceError] = useState<string>();
   const [saveError, setSaveError] = useState<string>();
+  const [review, setReview] = useState<EditReview>();
   const saved = useRef(false);
-  const amountErrorId = useId();
 
   const amountError = yenInputError(amountText, 1);
   const visibleAmountError = (amountText || submitted ? amountError : undefined) ?? balanceError;
@@ -69,10 +98,6 @@ export default function NewExpenseScreen() {
   const payerIsViewer = payer === viewer.slot;
   const payerName = payerIsViewer ? viewer.displayName : partner.displayName;
   const assignee = otherSlot(payer) === viewer.slot ? viewer : partner;
-
-  function close() {
-    router.dismissTo('/');
-  }
 
   function save() {
     if (saved.current) return;
@@ -96,8 +121,13 @@ export default function NewExpenseScreen() {
       input = { ...base, expenseType };
     }
 
-    saved.current = true;
     try {
+      if (expense) {
+        const expected = { version: audit.get(expense.id)?.length ?? 0, ledgerRevision: balance.ledgerRevision };
+        setReview({ input, expected, impact: previewExpenseEdit(expense.id, input, expected) });
+        return;
+      }
+      saved.current = true;
       createExpense(input);
     } catch (error) {
       saved.current = false;
@@ -108,43 +138,76 @@ export default function NewExpenseScreen() {
       }
       return;
     }
-    close();
+    closeExpense();
+  }
+
+  if (expense && review) {
+    const { before, after, netBefore, netAfter, cancelsPromise } = review.impact;
+    const stale = review.expected.ledgerRevision !== balance.ledgerRevision;
+    const beforeAmount = formatYen(Math.abs(netBefore));
+    const afterAmount = formatYen(Math.abs(netAfter));
+
+    function confirm() {
+      if (saved.current || !expense || !review) return;
+      if (stale) {
+        setReview(undefined);
+        return;
+      }
+      saved.current = true;
+      try {
+        updateExpense(expense.id, review.input, review.expected);
+      } catch (error) {
+        saved.current = false;
+        setSaveError(error instanceof Error ? error.message : '保存できませんでした。もう一度お試しください。');
+        return;
+      }
+      closeExpense();
+    }
+
+    function shareBreakdown(record: ExpenseRecord) {
+      const viewerYen = record.payerSlot === viewer.slot
+        ? record.amountYen - record.counterpartyShareYen : record.counterpartyShareYen;
+      return `あなた ${formatYen(viewerYen)}・${partner.displayName} ${formatYen(record.amountYen - viewerYen)}`;
+    }
+
+    return (
+      <Screen key="review" sheet>
+        <SheetHeader title="変更の影響を確認" onClose={() => setReview(undefined)} />
+        <View style={styles.details}>
+          <Text style={styles.previewBalance}>
+            {netBefore === netAfter ? `残高は ${afterAmount} のままです。`
+              : `残高が ${beforeAmount} → ${afterAmount} に変わります。`}
+          </Text>
+          {netAfter !== 0 && <Text style={styles.label}>{balanceDirection(netAfter, viewer.slot, partner.displayName)}</Text>}
+          <SummaryRow label="変更前" value={shareBreakdown(before)} styles={styles} />
+          <SummaryRow label="変更後" value={shareBreakdown(after)} styles={styles} />
+          {cancelsPromise && <Text style={styles.previewBalance}>種類を変更すると、紐づく約束も自動で取り消されます。</Text>}
+        </View>
+        <View style={styles.save}>
+          <FieldError message={stale ? '記録が変わりました。もう一度変更内容を確認してください。' : saveError} />
+          <View style={styles.actions}>
+            <PrimaryButton label={stale ? '編集に戻る' : '確定する'} onPress={confirm} />
+            {!stale && <SecondaryButton label="編集に戻る" onPress={() => setReview(undefined)} />}
+          </View>
+        </View>
+      </Screen>
+    );
   }
 
   return (
-    <Screen sheet>
-      <View style={styles.header}>
-        <Text accessibilityRole="header" style={styles.title}>支払いを追加</Text>
-        <Pressable accessibilityRole="button" onPress={close} style={styles.close}>
-          <Text style={styles.muted}>閉じる</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.amountField}>
-        <Text style={styles.label}>支払い金額</Text>
-        <View style={[styles.amountLine, visibleAmountError && styles.amountInvalid]}>
-          <Text aria-hidden style={styles.amount}>¥</Text>
-          <TextInput
-            accessibilityLabel="支払い金額"
-            aria-invalid={Boolean(visibleAmountError)}
-            aria-describedby={visibleAmountError ? amountErrorId : undefined}
-            autoFocus
-            inputMode="numeric"
-            keyboardType="number-pad"
-            placeholder="0"
-            placeholderTextColor={colors[scheme].inkMuted}
-            value={amountFocused || amount === undefined ? amountText : formatYenDigits(amount)}
-            onFocus={() => setAmountFocused(true)}
-            onBlur={() => setAmountFocused(false)}
-            onChangeText={value => {
-              setAmountText(value);
-              setBalanceError(undefined);
-            }}
-            style={[styles.amount, styles.amountInput]}
-          />
-        </View>
-        <FieldError id={amountErrorId} message={visibleAmountError} />
-      </View>
+    <Screen key="form" sheet>
+      <SheetHeader title={expense ? '支払いを編集' : '支払いを追加'} onClose={closeExpense} />
+      <AmountInput
+        label="支払い金額"
+        text={amountText}
+        amount={amount}
+        error={visibleAmountError}
+        autoFocus={!expense}
+        onChangeText={value => {
+          setAmountText(value);
+          setBalanceError(undefined);
+        }}
+      />
 
       <View>
         <View style={styles.summary}>
@@ -227,7 +290,7 @@ export default function NewExpenseScreen() {
       )}
 
       <View style={styles.save}>
-        <PrimaryButton label="保存" onPress={save} />
+        <PrimaryButton label={expense ? '変更内容を確認' : '保存'} onPress={save} />
         <FieldError message={saveError} />
       </View>
     </Screen>
@@ -238,30 +301,14 @@ function SummaryRow({ label, value, styles }: { label: string; value: string; st
   return (
     <View style={styles.summaryRow}>
       <Text style={styles.label}>{label}</Text>
-      <Text numberOfLines={1} style={styles.summaryValue}>{value}</Text>
+      <Text style={styles.summaryValue}>{value}</Text>
     </View>
   );
 }
 
 function createStyles(color: ColorTokens) {
   return StyleSheet.create({
-    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-    title: { ...typography.screenTitle, color: color.ink },
-    close: { minHeight: layout.choiceHeight, justifyContent: 'center', paddingLeft: spacing.lg },
-    muted: { ...typography.body, color: color.inkMuted },
     label: { ...typography.small, color: color.inkMuted },
-    amountField: { gap: spacing.xs },
-    amountLine: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: spacing.sm,
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: color.hairline,
-      paddingBottom: spacing.sm,
-    },
-    amount: { ...typography.balance, ...typography.numbers, color: color.ink },
-    amountInput: { flex: 1, minWidth: 0, padding: 0 },
-    amountInvalid: { borderBottomColor: color.danger },
     summary: {
       gap: spacing.sm,
       paddingBottom: spacing.md,
@@ -274,12 +321,14 @@ function createStyles(color: ColorTokens) {
       justifyContent: 'space-between',
       gap: spacing.lg,
     },
-    summaryValue: { ...typography.body, ...typography.numbers, color: color.ink, flexShrink: 1 },
+    summaryValue: { ...typography.body, ...typography.numbers, color: color.ink, flexShrink: 1, textAlign: 'right' },
     sharePreview: { ...typography.body, ...typography.numbers, color: color.ink, textAlign: 'right' },
     details: { gap: spacing.lg },
     choiceField: { gap: spacing.xs },
     promiseInput: { minHeight: layout.rowMinHeight, textAlignVertical: 'top' },
     save: { gap: spacing.xs },
+    actions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
+    previewBalance: { ...typography.body, ...typography.numbers, color: color.ink },
   });
 }
 

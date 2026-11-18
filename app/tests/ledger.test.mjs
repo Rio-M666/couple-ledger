@@ -5,12 +5,22 @@ import { expenseStatus, halfShare, yenInputError } from '../src/data/expense.ts'
 import { businessDate, formatDateHeading } from '../src/data/format.ts';
 import { groupHistory } from '../src/data/history.ts';
 import {
+  acceptInvitation,
   createExpense,
+  createSettlement,
   getInitialLedgerSnapshot,
   getLedgerSnapshot,
   loadHome,
+  previewExpenseEdit,
+  previewSettlement,
+  resetOnboarding,
+  saveDisplayName,
+  setRecordCanceled,
+  signInLocally,
   subscribeToLedger,
+  updateExpense,
 } from '../src/data/home.ts';
+import { invitationCodeError, sampleInvitation } from '../src/data/onboarding.ts';
 
 const draft = {
   title: '',
@@ -20,6 +30,11 @@ const draft = {
   expenseType: 'split',
   counterpartyShareYen: halfShare(1_001),
 };
+
+function currentVersion(id) {
+  const { audit, balance } = getLedgerSnapshot();
+  return { version: audit.get(id).length, ledgerRevision: balance.ledgerRevision };
+}
 
 test('§5.3 fixtures and the older records leave a ¥200 balance', async () => {
   const { balance, timeline } = getInitialLedgerSnapshot();
@@ -35,6 +50,40 @@ test('§5.3 fixtures and the older records leave a ¥200 balance', async () => {
   }
   assert.equal(timeline.find(item => item.id === 'expense-8').canceledAt !== null, true);
   assert.equal((await loadHome('zero')).balance.netAYen, 0);
+});
+
+test('settling ¥200 clears the ¥200 balance, while ¥500 leaves a ¥300 prepayment', () => {
+  const input = { senderSlot: 'B', occurredOn: draft.occurredOn, settlementTargets: [] };
+  assert.equal(getLedgerSnapshot().balance.netAYen, 200);
+  const exact = createSettlement({ ...input, amountYen: 200, settlementTargets: ['expense-3'] });
+  assert.deepEqual(exact.settlementTargets, ['expense-3']);
+  assert.equal(getLedgerSnapshot().balance.netAYen, 0);
+  assert.ok(getLedgerSnapshot().allocations.settlements.some(allocation =>
+    allocation.settlementId === exact.id && allocation.expenseId === 'expense-3' && allocation.amountYen === 200));
+  assert.equal(getLedgerSnapshot().timeline.find(item => item.id === 'expense-3').remainingYen, 0);
+  setRecordCanceled(exact.id, true, currentVersion(exact.id));
+  assert.equal(getLedgerSnapshot().balance.netAYen, 200);
+
+  const overpayment = { ...input, amountYen: 500 };
+  assert.deepEqual(previewSettlement(overpayment), { netAfter: -300, prepaymentYen: 300 });
+  const transfer = createSettlement(overpayment);
+  assert.equal(getLedgerSnapshot().balance.netAYen, -300);
+  assert.equal(getLedgerSnapshot().allocations.prepayments.get(transfer.id), 300);
+  setRecordCanceled(transfer.id, true, currentVersion(transfer.id));
+  setRecordCanceled(transfer.id, false, currentVersion(transfer.id));
+  assert.equal(getLedgerSnapshot().balance.netAYen, -300);
+  setRecordCanceled(transfer.id, true, currentVersion(transfer.id));
+});
+
+test('the §5.3 fixture explains offsets, direct allocations, and the use of a prepayment', () => {
+  const { allocations } = getInitialLedgerSnapshot();
+  assert.ok(allocations.offsets.some(offset =>
+    offset.expenseAId === 'expense-1' && offset.expenseBId === 'expense-2' && offset.amountYen === 600));
+  assert.deepEqual(allocations.settlements, [
+    { settlementId: 'settlement-1', expenseId: 'expense-1', amountYen: 400, fromPrepayment: false },
+    { settlementId: 'settlement-1', expenseId: 'expense-3', amountYen: 300, fromPrepayment: true },
+  ]);
+  assert.equal(allocations.prepayments.size, 0);
 });
 
 test('saving A and B splits applies §5.1, including the odd yen and both custom-share endpoints', async () => {
@@ -132,4 +181,89 @@ test('date headings follow the Tokyo day boundary and show the actual weekday', 
   assert.equal(formatDateHeading('2026-11-18', now), '今日');
   assert.equal(formatDateHeading('2026-11-17', now), '昨日');
   assert.equal(formatDateHeading('2026-11-15', now), '11月15日（日）');
+});
+
+test('canceling a split removes its balance contribution and restoring it adds the contribution back', () => {
+  const startingBalance = getLedgerSnapshot().balance.netAYen;
+  const split = createExpense(draft);
+  setRecordCanceled(split.id, true, currentVersion(split.id));
+  assert.equal(getLedgerSnapshot().balance.netAYen, startingBalance);
+  setRecordCanceled(split.id, false, currentVersion(split.id));
+  assert.equal(getLedgerSnapshot().balance.netAYen, startingBalance + draft.counterpartyShareYen);
+  assert.deepEqual(getLedgerSnapshot().audit.get(split.id).map(entry => entry.action), ['created', 'canceled', 'restored']);
+});
+
+test('canceling a gift cancels its promise in the same update, and restoring the gift leaves the promise canceled', () => {
+  const expense = createExpense({ ...draft, expenseType: 'gift_promise', promise: { body: '買い出し', dueOn: null } });
+  const promise = getLedgerSnapshot().timeline.find(item => item.kind === 'promise' && item.expenseId === expense.id);
+  const before = getLedgerSnapshot();
+  setRecordCanceled(expense.id, true, currentVersion(expense.id));
+  const canceled = getLedgerSnapshot();
+  const canceledExpense = canceled.timeline.find(item => item.id === expense.id);
+  assert.ok(canceledExpense.canceledAt);
+  assert.equal(canceled.balance.ledgerRevision, before.balance.ledgerRevision + 1);
+  assert.equal(canceled.balance.netAYen, before.balance.netAYen);
+  assert.equal(canceled.timeline.find(item => item.id === promise.id).canceledAt, canceledExpense.canceledAt);
+
+  setRecordCanceled(expense.id, false, currentVersion(expense.id));
+  const restored = getLedgerSnapshot();
+  assert.equal(restored.timeline.find(item => item.id === expense.id).canceledAt, null);
+  assert.equal(restored.timeline.find(item => item.id === promise.id).canceledAt, canceledExpense.canceledAt);
+  assert.deepEqual(restored.audit.get(promise.id).map(entry => entry.action), ['created', 'canceled']);
+});
+
+test('editing a share previews and applies only the difference, then records the change', () => {
+  const created = createExpense(draft);
+  const before = getLedgerSnapshot();
+  const edited = { ...draft, counterpartyShareYen: draft.counterpartyShareYen + 150 };
+  const expected = currentVersion(created.id);
+  const preview = previewExpenseEdit(created.id, edited, expected);
+  assert.equal(preview.netBefore, before.balance.netAYen);
+  assert.equal(preview.netAfter, before.balance.netAYen + 150);
+  assert.equal(getLedgerSnapshot(), before);
+  updateExpense(created.id, edited, expected);
+  const after = getLedgerSnapshot();
+  assert.equal(after.balance.netAYen, preview.netAfter);
+  const entry = after.audit.get(created.id).at(-1);
+  assert.equal(entry.action, 'edited');
+  assert.equal(entry.before.counterpartyShareYen, draft.counterpartyShareYen);
+  assert.equal(entry.after.counterpartyShareYen, edited.counterpartyShareYen);
+  assert.throws(() => updateExpense(created.id, edited, expected));
+  assert.equal(getLedgerSnapshot(), after);
+});
+
+test('changing an expense to a kind without a promise previews and applies the automatic cancellation', () => {
+  const expense = createExpense({ ...draft, expenseType: 'gift_promise', promise: { body: '買い出し', dueOn: null } });
+  const expected = currentVersion(expense.id);
+  const before = getLedgerSnapshot();
+  const preview = previewExpenseEdit(expense.id, draft, expected);
+  assert.equal(preview.cancelsPromise, true);
+  assert.equal(preview.netAfter, before.balance.netAYen + draft.counterpartyShareYen);
+  assert.equal(getLedgerSnapshot(), before);
+  updateExpense(expense.id, draft, expected);
+  const { timeline, balance } = getLedgerSnapshot();
+  assert.ok(timeline.find(item => item.kind === 'promise' && item.expenseId === expense.id).canceledAt);
+  assert.equal(balance.netAYen, preview.netAfter);
+});
+
+test('the local onboarding gate requires valid fields and explicit invite acceptance', () => {
+  assert.equal(getInitialLedgerSnapshot().appState.status, 'paired');
+  resetOnboarding();
+  assert.throws(() => createExpense(draft));
+  signInLocally('invalid', 'password');
+  assert.equal(getLedgerSnapshot().appState.status, 'signed-out');
+  signInLocally('local@example.test', 'password');
+  assert.deepEqual(getLedgerSnapshot().appState, { status: 'needs-name' });
+  saveDisplayName('   ');
+  assert.equal(getLedgerSnapshot().appState.status, 'needs-name');
+  saveDisplayName('  葵  ');
+  assert.deepEqual(getLedgerSnapshot().appState, { status: 'unpaired', displayName: '葵' });
+  const invitation = sampleInvitation(new Date('2026-11-18T15:00:00Z'));
+  assert.equal(invitation.expiresOn, '2026-11-26');
+  assert.equal(invitationCodeError(invitation.code), undefined);
+  acceptInvitation('00000000');
+  assert.equal(getLedgerSnapshot().appState.status, 'unpaired');
+  acceptInvitation('k7m4-r9t2');
+  assert.equal(getLedgerSnapshot().appState.status, 'paired');
+  assert.equal(getLedgerSnapshot().timeline.find(item => item.id === 'settlement-1').title, 'パートナーから葵へ');
 });

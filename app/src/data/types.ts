@@ -29,27 +29,68 @@ export type ExpenseRecord = TimelineRecord & {
   remainingYen: number;
 };
 
-export type TimelineItem = ExpenseRecord | (TimelineRecord & (
-  | {
-      kind: 'settlement';
-      senderSlot: MemberSlot;
-      receiverSlot: MemberSlot;
-      amountYen: number;
-    }
-  | {
-      kind: 'promise';
-      expenseId: string;
-      assigneeSlot: MemberSlot;
-      dueOn: string | null;
-      status: 'pending' | 'completed';
-    }
-));
+export type SettlementRecord = TimelineRecord & NewSettlement & {
+  kind: 'settlement';
+  receiverSlot: MemberSlot;
+};
+
+export type PromiseRecord = TimelineRecord & {
+  kind: 'promise';
+  expenseId: string;
+  assigneeSlot: MemberSlot;
+  dueOn: string | null;
+  status: 'pending' | 'completed';
+};
+
+export type TimelineItem = ExpenseRecord | SettlementRecord | PromiseRecord;
+
+export type NewSettlement = {
+  senderSlot: MemberSlot;
+  amountYen: number;
+  occurredOn: string;
+  settlementTargets: readonly string[];
+};
+
+export type SettlementAllocation = {
+  settlementId: string;
+  expenseId: string;
+  amountYen: number;
+  fromPrepayment: boolean;
+};
+
+export type OffsetAllocation = {
+  expenseAId: string;
+  expenseBId: string;
+  amountYen: number;
+};
+
+export type AuditEntry = {
+  action: 'created' | 'edited' | 'canceled' | 'restored';
+  actorSlot: MemberSlot;
+  at: string;
+  before?: TimelineItem;
+  after: TimelineItem;
+};
 
 export type HomeData = {
   viewer: Member;
   partner: Member;
   balance: PairBalance;
   timeline: readonly TimelineItem[];
+};
+
+export type AppState =
+  | { status: 'signed-out' | 'needs-name' }
+  | { status: 'unpaired' | 'paired'; displayName: string };
+
+export type LedgerSnapshot = HomeData & {
+  appState: AppState;
+  audit: ReadonlyMap<string, readonly AuditEntry[]>;
+  allocations: {
+    settlements: readonly SettlementAllocation[];
+    offsets: readonly OffsetAllocation[];
+    prepayments: ReadonlyMap<string, number>;
+  };
 };
 
 export type NewExpense = {
