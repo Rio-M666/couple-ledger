@@ -1,7 +1,9 @@
-import { DarkTheme, DefaultTheme, Slot, ThemeProvider } from 'expo-router';
+import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 
 import { colors, useThemeScheme } from '@/theme';
+
+export const unstable_settings = { anchor: '(tabs)' };
 
 export default function RootLayout() {
   const scheme = useThemeScheme();
@@ -22,7 +24,10 @@ export default function RootLayout() {
         },
       }}>
       <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
-      <Slot />
+      <Stack screenOptions={{ headerShown: false, animation: 'none' }}>
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="expense/new" options={{ presentation: 'modal' }} />
+      </Stack>
     </ThemeProvider>
   );
 }

@@ -44,6 +44,9 @@ export const layout = {
   maxContentWidth: 600,
   rowMinHeight: 56,
   buttonRadius: 12,
+  inputRadius: 10,
+  choiceHeight: 44,
+  balanceRuleHeight: 3,
   progressMinWidth: 96,
 } as const;
 
