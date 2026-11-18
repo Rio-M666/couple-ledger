@@ -7,16 +7,20 @@ import {
   promiseBodyError,
   promiseDueDateError,
 } from './expense.ts';
+import { businessDate } from './format.ts';
 import { displayNameError, emailError, invitationCodeError, passwordError } from './onboarding.ts';
+import { pendingRevival, revivalCooldown, revivalPeriodMs, revivalStatus } from './pair-lifecycle.ts';
 import type {
-  AppState, AuditEntry, ExpenseRecord, HomeData, LedgerSnapshot, Member, NewExpense, NewSettlement,
-  PromiseRecord, SettlementRecord, TimelineItem,
+  AppState, ArchivedPair, AuditEntry, ExpenseRecord, HomeData, LedgerData, LedgerSnapshot, Member, MemberSlot,
+  NewExpense, NewSettlement, PairLedger, PromiseRecord, RevivalRequest, SettlementRecord, TimelineItem,
 } from './types.ts';
 
 export type HomeScenario = 'sample' | 'zero' | 'empty' | 'error';
 
 const viewer = { slot: 'A', displayName: '理央' } satisfies Member;
 const partner = { slot: 'B', displayName: 'パートナー' } satisfies Member;
+const fixturePartner = { ...partner, id: 'fixture-partner' };
+const alternatePartner = { ...partner, id: 'alternate-partner', displayName: '葵' };
 
 const latestExpense = {
   id: 'expense-3',
@@ -157,15 +161,13 @@ function balanceContribution(item: TimelineItem) {
 function projectHome(
   records: readonly TimelineItem[],
   ledgerRevision: number,
-  appState: AppState,
-  audit: LedgerSnapshot['audit'],
-): LedgerSnapshot {
+  currentPartner: Member,
+  audit: LedgerData['audit'],
+): LedgerData {
   const net = records.reduce((total, record) => total + BigInt(balanceContribution(record)), 0n);
   const netAYen = Number(net);
   if (!Number.isSafeInteger(netAYen)) throw new RangeError('残高を表示できる金額の上限を超えています。');
 
-  const currentViewer = 'displayName' in appState ? { ...viewer, displayName: appState.displayName } : viewer;
-  const names = { A: currentViewer.displayName, B: partner.displayName };
   // The fixture records are stored in registration order. The stable sort preserves it on the same business date.
   const ordered = [...records].sort((a, b) => a.occurredOn.localeCompare(b.occurredOn));
   const { allocations, expenses } = projectAllocations(ordered);
@@ -174,15 +176,23 @@ function projectHome(
       const remainingYen = expenses.get(record.id)?.remainingYen ?? 0;
       return remainingYen === record.remainingYen ? record : { ...record, remainingYen };
     }
-    if (record.kind === 'settlement') {
-      return { ...record, title: `${names[record.senderSlot]}から${names[record.receiverSlot]}へ` };
-    }
     return record;
   });
-  return { viewer: currentViewer, partner, balance: { netAYen, ledgerRevision }, timeline, appState, audit, allocations };
+  return { viewer, partner: currentPartner, balance: { netAYen, ledgerRevision }, timeline, audit, allocations };
 }
 
-function fixtureAudit(): LedgerSnapshot['audit'] {
+function withDisplayName(data: LedgerData, displayName: string): LedgerData {
+  const names = { A: displayName, B: data.partner.displayName };
+  return {
+    ...data,
+    viewer: { ...data.viewer, displayName },
+    timeline: data.timeline.map(record => record.kind === 'settlement'
+      ? { ...record, title: `${names[record.senderSlot]}から${names[record.receiverSlot]}へ` }
+      : record),
+  };
+}
+
+function fixtureAudit(): LedgerData['audit'] {
   return new Map(fixtureRecords.map(record => {
     const createdAt = `${record.occurredOn}T00:00:00Z`;
     const original = { ...record, canceledAt: null };
@@ -201,13 +211,69 @@ function fixtureAudit(): LedgerSnapshot['audit'] {
   }));
 }
 
-// Fixture adapter. When Hono is connected, replace reads/subscriptions and writes
-// here with API calls and consume the engine's balance and allocation projections.
+type StoredPair = Pick<PairLedger, 'id' | 'linkedOn' | 'revivalRequests'> & {
+  partnerId: string;
+  archivedAt: number | null;
+  records: readonly TimelineItem[];
+  ledger: LedgerData;
+};
+
+function createPair(id: string, member: Member & { id: string }, linkedOn: string, records: readonly TimelineItem[],
+  revision: number, audit: LedgerData['audit']): StoredPair {
+  const { id: partnerId, ...pairPartner } = member;
+  return {
+    id, partnerId, linkedOn, archivedAt: null, revivalRequests: [], records,
+    ledger: projectHome(records, revision, pairPartner, audit),
+  };
+}
+
+// Fixture adapter. Replace these reads/subscriptions and their record and lifecycle
+// commands with Hono calls and consume the API's balance and allocation projections.
 const fixtureAppState = { status: 'paired', displayName: viewer.displayName } satisfies AppState;
-const initialSnapshot = projectHome(fixtureRecords, 9, fixtureAppState, fixtureAudit());
-let records = fixtureRecords;
+const fixturePair = createPair('pair-1', fixturePartner, '2026-11-06', fixtureRecords, 9, fixtureAudit());
+const emptyLedger = projectHome([], 0, partner, new Map());
+const pairs = new Map([[fixturePair.id, fixturePair]]);
+const partnersPairedElsewhere = new Set<string>();
+let profileName = viewer.displayName;
+let replayOnboarding = false;
+const initialSnapshot = projectSnapshot(fixtureAppState);
 let snapshot = initialSnapshot;
 const listeners = new Set<() => void>();
+let revivalTimer: ReturnType<typeof setTimeout> | undefined;
+
+function activeStoredPair() {
+  return Array.from(pairs.values()).find(pair => pair.archivedAt === null);
+}
+
+function projectSnapshot(appState: AppState, now = Date.now()): LedgerSnapshot {
+  const displayName = 'displayName' in appState ? appState.displayName : viewer.displayName;
+  let ledger = withDisplayName(emptyLedger, displayName);
+  let activePair: LedgerSnapshot['activePair'] = null;
+  const pastPairs: ArchivedPair[] = [];
+  if ('displayName' in appState) {
+    for (const pair of pairs.values()) {
+      if (pair.archivedAt === null && appState.status !== 'paired') continue;
+      const data = withDisplayName(pair.ledger, displayName);
+      const pairInfo = {
+        ...data,
+        id: pair.id,
+        linkedOn: pair.linkedOn,
+        revivalRequests: pair.revivalRequests.map(request => ({ ...request, status: revivalStatus(request, now) })),
+      };
+      if (pair.archivedAt === null) {
+        ledger = data;
+        activePair = { ...pairInfo, status: 'active', archivedAt: null };
+      } else {
+        pastPairs.push({
+          ...pairInfo, status: 'archived', archivedAt: pair.archivedAt,
+          partnerPairedElsewhere: partnersPairedElsewhere.has(pair.partnerId),
+        });
+      }
+    }
+  }
+  pastPairs.sort((a, b) => b.archivedAt - a.archivedAt);
+  return { ...ledger, appState, activePair, pastPairs };
+}
 
 export function getLedgerSnapshot() {
   return snapshot;
@@ -219,58 +285,222 @@ export function getInitialLedgerSnapshot() {
 
 export function subscribeToLedger(listener: () => void) {
   listeners.add(listener);
-  return () => { listeners.delete(listener); };
+  if (listeners.size === 1) scheduleRevivalRefresh();
+  return () => {
+    listeners.delete(listener);
+    if (!listeners.size) clearTimeout(revivalTimer);
+  };
 }
 
-function publish(nextSnapshot: LedgerSnapshot, nextRecords = records) {
-  records = nextRecords;
-  snapshot = nextSnapshot;
+function scheduleRevivalRefresh(now = Date.now()) {
+  clearTimeout(revivalTimer);
+  if (!listeners.size) return;
+
+  let next = Infinity;
+  for (const pair of snapshot.pastPairs) {
+    const request = pendingRevival(pair, now);
+    const cooldown = revivalCooldown(pair, viewer.slot, now);
+    next = Math.min(next, request?.expiresAt ?? Infinity, cooldown ?? Infinity);
+  }
+  if (Number.isFinite(next)) {
+    revivalTimer = setTimeout(() => publish(snapshot.appState), next - now);
+  }
+}
+
+function publish(appState = snapshot.appState) {
+  const now = Date.now();
+  snapshot = projectSnapshot(appState, now);
+  scheduleRevivalRefresh(now);
   listeners.forEach(listener => listener());
 }
 
-function setAppState(appState: AppState) {
-  publish(projectHome(records, snapshot.balance.ledgerRevision, appState, snapshot.audit));
+export function resetOnboarding() {
+  replayOnboarding = true;
+  publish({ status: 'signed-out' });
 }
 
-export function resetOnboarding() {
-  setAppState({ status: 'signed-out' });
+export function logOutLocally() {
+  replayOnboarding = false;
+  publish({ status: 'signed-out' });
 }
 
 export function signInLocally(email: string, password: string) {
-  // Supabase Auth boundary. The local stub validates shape and never stores credentials.
-  if (snapshot.appState.status === 'signed-out' && !emailError(email) && !passwordError(password)) {
-    setAppState({ status: 'needs-name' });
+  if (!emailError(email) && !passwordError(password)) resumeLocalSession();
+}
+
+export function resumeLocalSession() {
+  if (snapshot.appState.status === 'signed-out') {
+    publish(replayOnboarding ? { status: 'needs-name' } : {
+      status: activeStoredPair() ? 'paired' : 'unpaired', displayName: profileName,
+    });
   }
 }
 
 export function saveDisplayName(displayName: string) {
-  if (snapshot.appState.status === 'needs-name' && !displayNameError(displayName)) {
-    setAppState({ status: 'unpaired', displayName: displayName.trim() });
-  }
+  const { status } = snapshot.appState;
+  if (status === 'signed-out' || displayNameError(displayName)) return;
+  profileName = displayName.trim();
+  publish({ status: status === 'needs-name' ? 'unpaired' : status, displayName: profileName });
+}
+
+function invitationPartner(code: string) {
+  // The second fixture code exercises invitations from a different partner.
+  return code.trim().toUpperCase().replaceAll('-', '') === 'B7C4D9F2' ? alternatePartner : fixturePartner;
+}
+
+export function reviewInvitation(code: string) {
+  const invitedBy = invitationPartner(code);
+  const past = snapshot.pastPairs.find(pair => pairs.get(pair.id)?.partnerId === invitedBy.id);
+  return { partnerName: invitedBy.displayName, archivedPairId: past?.id };
 }
 
 export function acceptInvitation(code: string) {
-  // Local stub: every well-formed code resolves to the fixture partner.
-  if (snapshot.appState.status === 'unpaired' && !invitationCodeError(code)) {
-    setAppState({ ...snapshot.appState, status: 'paired' });
+  if (snapshot.appState.status !== 'unpaired' || invitationCodeError(code)) return;
+  const invitedBy = invitationPartner(code);
+  const active = activeStoredPair();
+  if (active?.partnerId !== invitedBy.id) {
+    requireUnpaired(invitedBy.id);
+    if (reviewInvitation(code).archivedPairId) throw new Error('過去のペアから復活を申請してください。');
+    const now = Date.now();
+    const pair = createPair(`pair-${pairs.size + 1}`, invitedBy, businessDate(new Date(now)), [], 0, new Map());
+    pairs.set(pair.id, pair);
+    invalidateOtherRevivals(pair.id, now);
   }
+  replayOnboarding = false;
+  publish({ status: 'paired', displayName: profileName });
 }
 
 function requirePair() {
-  if (snapshot.appState.status !== 'paired') throw new Error('記録するにはパートナーとの連携が必要です。');
+  const pair = snapshot.activePair && pairs.get(snapshot.activePair.id);
+  if (!pair || pair.archivedAt !== null) {
+    throw new Error('記録するにはパートナーとの連携が必要です。解散済みの記録は変更できません。');
+  }
+  return pair;
+}
+
+function requireArchivedPair(pairId: string) {
+  const pair = pairs.get(pairId);
+  if (!snapshot.pastPairs.some(candidate => candidate.id === pairId) || !pair || pair.archivedAt === null) {
+    throw new Error('過去のペアが見つかりませんでした。');
+  }
+  return pair;
+}
+
+function requireUnpaired(partnerId: string) {
+  if (activeStoredPair()) throw new Error('現在のペアを解散してからお試しください。');
+  if (partnersPairedElsewhere.has(partnerId)) throw new Error('相手は別のペアに連携しています。');
+}
+
+function addRevival(pair: StoredPair, requesterSlot: MemberSlot, now: number) {
+  if (revivalCooldown(pair, requesterSlot, now)) {
+    throw new Error('却下から7日間は復活を再申請できません。');
+  }
+  const request: RevivalRequest = {
+    id: `${pair.id}-revival-${pair.revivalRequests.length + 1}`, requesterSlot, status: 'pending',
+    requestedAt: now, expiresAt: now + revivalPeriodMs,
+  };
+  const previous = pair.revivalRequests.map(item => ({ ...item, status: revivalStatus(item, now) }));
+  return { request, pair: { ...pair, revivalRequests: [...previous, request] } };
+}
+
+function archivePair(incoming: boolean) {
+  const pair = requirePair();
+  const now = Date.now();
+  const archived = { ...pair, archivedAt: now };
+  pairs.set(pair.id, incoming ? addRevival(archived, partner.slot, now).pair : archived);
+  publish({ status: 'unpaired', displayName: profileName });
+}
+
+export function archiveActivePair() {
+  archivePair(false);
+}
+
+export function simulateIncomingRevival() {
+  archivePair(true);
+}
+
+export function requestRevival(pairId: string) {
+  const pair = requireArchivedPair(pairId);
+  requireUnpaired(pair.partnerId);
+  const now = Date.now();
+  const pending = pendingRevival(pair, now);
+  if (pending) return pending;
+  const next = addRevival(pair, viewer.slot, now);
+  pairs.set(pair.id, next.pair);
+  publish();
+  return next.request;
+}
+
+function invalidatePairRevival(pair: StoredPair, now: number) {
+  if (pendingRevival(pair, now)) {
+    pairs.set(pair.id, { ...pair, revivalRequests: pair.revivalRequests.map(request =>
+      revivalStatus(request, now) === 'pending' ? { ...request, status: 'invalidated', decidedAt: now } : request) });
+  }
+}
+
+function invalidateOtherRevivals(activePairId: string, now: number) {
+  for (const pair of pairs.values()) {
+    if (pair.id !== activePairId) invalidatePairRevival(pair, now);
+  }
+}
+
+export type RevivalDecision = 'approve' | 'reject' | 'cancel';
+
+export function resolveRevival(pairId: string, requestId: string, decision: RevivalDecision) {
+  const pair = requireArchivedPair(pairId);
+  const now = Date.now();
+  const request = pair.revivalRequests.find(item => item.id === requestId);
+  if (!request || revivalStatus(request, now) !== 'pending') throw new Error('この復活申請は終了しています。');
+  if ((decision === 'cancel') !== (request.requesterSlot === viewer.slot)) {
+    throw new Error('この復活申請は操作できません。');
+  }
+  if (decision === 'approve') requireUnpaired(pair.partnerId);
+
+  const status = { approve: 'approved', reject: 'rejected', cancel: 'canceled' } as const;
+  const result = { ...request, status: status[decision], decidedAt: now };
+  pairs.set(pair.id, {
+    ...pair, archivedAt: decision === 'approve' ? null : pair.archivedAt,
+    revivalRequests: pair.revivalRequests.map(item => item === request ? result : item),
+  });
+  if (decision === 'approve') {
+    invalidateOtherRevivals(pair.id, now);
+    publish({ status: 'paired', displayName: profileName });
+  } else {
+    publish();
+  }
+  return result;
+}
+
+// Local fixture for a former partner becoming linked to another account.
+export function setFixturePartnerPairedElsewhere(pairId: string, paired: boolean) {
+  const pair = requireArchivedPair(pairId);
+  if (paired) {
+    partnersPairedElsewhere.add(pair.partnerId);
+    invalidatePairRevival(pair, Date.now());
+  } else {
+    partnersPairedElsewhere.delete(pair.partnerId);
+  }
+  publish();
 }
 
 type PendingChange = Pick<AuditEntry, 'action' | 'before' | 'after'>;
 
+function newRecordId(kind: TimelineItem['kind'], pairId: string, revision: number) {
+  return `${kind}-new-${pairId}-${revision}`;
+}
+
 function saveChanges(nextRecords: readonly TimelineItem[], changes: readonly PendingChange[], at: string) {
-  const audit = new Map(snapshot.audit);
+  const pair = requirePair();
+  const audit = new Map(pair.ledger.audit);
   for (const change of changes) {
     audit.set(change.after.id, [
       ...(audit.get(change.after.id) ?? []),
       { ...change, at, actorSlot: snapshot.viewer.slot },
     ]);
   }
-  publish(projectHome(nextRecords, snapshot.balance.ledgerRevision + 1, snapshot.appState, audit), nextRecords);
+  const ledger = projectHome(nextRecords, pair.ledger.balance.ledgerRevision + 1, pair.ledger.partner, audit);
+  pairs.set(pair.id, { ...pair, records: nextRecords, ledger });
+  publish();
 }
 
 function buildExpense(input: NewExpense, id: string): ExpenseRecord {
@@ -304,19 +534,19 @@ function buildPromise(input: Extract<NewExpense, { expenseType: 'gift_promise' }
 }
 
 export function createExpense(input: NewExpense) {
-  requirePair();
+  const { id: pairId, records } = requirePair();
   const revision = snapshot.balance.ledgerRevision + 1;
-  const expense = buildExpense(input, `expense-new-${revision}`);
+  const expense = buildExpense(input, newRecordId('expense', pairId, revision));
   const added: TimelineItem[] = [];
   if (input.expenseType === 'gift_promise') {
-    added.push(buildPromise(input, expense, `promise-new-${revision}`));
+    added.push(buildPromise(input, expense, newRecordId('promise', pairId, revision)));
   }
   added.push(expense);
   saveChanges([...records, ...added], added.map(after => ({ action: 'created', after })), new Date().toISOString());
   return snapshot.timeline.find(item => item.kind === 'expense' && item.id === expense.id) as ExpenseRecord;
 }
 
-function buildSettlement(input: NewSettlement): SettlementRecord {
+function buildSettlement(input: NewSettlement, pairId: string, current = snapshot): SettlementRecord {
   if (!Number.isSafeInteger(input.amountYen) || input.amountYen < 1) {
     throw new Error('1円以上の整数を入力してください。');
   }
@@ -325,10 +555,10 @@ function buildSettlement(input: NewSettlement): SettlementRecord {
 
   const receiverSlot = otherSlot(input.senderSlot);
   const targets = [...new Set(input.settlementTargets)];
-  const eligible = new Set(settlementCandidates(snapshot.timeline, input.senderSlot).map(item => item.id));
+  const eligible = new Set(settlementCandidates(current.timeline, input.senderSlot).map(item => item.id));
   if (targets.some(id => !eligible.has(id))) throw new Error('充当先を選び直してください。');
   return {
-    ...input, id: `settlement-new-${snapshot.balance.ledgerRevision + 1}`, kind: 'settlement',
+    ...input, id: newRecordId('settlement', pairId, current.balance.ledgerRevision + 1), kind: 'settlement',
     title: '精算', receiverSlot, canceledAt: null, settlementTargets: targets,
   };
 }
@@ -338,10 +568,10 @@ export function settlementCandidates(timeline: readonly TimelineItem[], sender: 
     && !item.canceledAt && item.payerSlot !== sender && item.remainingYen > 0);
 }
 
-export function previewSettlement(input: NewSettlement) {
-  requirePair();
-  const settlement = buildSettlement(input);
-  const projected = projectHome([...records, settlement], snapshot.balance.ledgerRevision, snapshot.appState, snapshot.audit);
+export function previewSettlement(input: NewSettlement, current = snapshot) {
+  const { id: pairId, records, ledger } = pairForPreview(current);
+  const settlement = buildSettlement(input, pairId, current);
+  const projected = projectHome([...records, settlement], ledger.balance.ledgerRevision, ledger.partner, ledger.audit);
   return {
     netAfter: projected.balance.netAYen,
     prepaymentYen: projected.allocations.prepayments.get(settlement.id) ?? 0,
@@ -349,23 +579,30 @@ export function previewSettlement(input: NewSettlement) {
 }
 
 export function createSettlement(input: NewSettlement) {
-  requirePair();
-  const settlement = buildSettlement(input);
+  const { id: pairId, records } = requirePair();
+  const settlement = buildSettlement(input, pairId);
   saveChanges([...records, settlement], [{ action: 'created', after: settlement }], new Date().toISOString());
   return snapshot.timeline.find(item => item.kind === 'settlement' && item.id === settlement.id) as SettlementRecord;
 }
 
-export type RecordVersion = { version: number; ledgerRevision: number };
+export type RecordVersion = { pairId?: string; version: number; ledgerRevision: number };
 
-function recordForChange(id: string, expected: RecordVersion) {
-  requirePair();
-  const record = records.find(item => item.id === id);
+function pairForPreview(current: LedgerSnapshot) {
+  if (current === snapshot) return requirePair();
+  if (!current.activePair) throw new Error('記録するにはパートナーとの連携が必要です。');
+  return { id: current.activePair.id, records: [...current.timeline].reverse(), ledger: current };
+}
+
+export function recordForChange(id: string, expected: RecordVersion, current = snapshot) {
+  const pair = pairForPreview(current);
+  if (expected.pairId !== undefined && expected.pairId !== pair.id) throw new Error('別のペアの記録は変更できません。');
+  const record = pair.records.find(item => item.id === id);
   if (!record) throw new Error('記録が見つかりませんでした。');
-  // API boundary: the server will check both versions atomically on preview and commit.
-  if (expected.version !== snapshot.audit.get(id)?.length || expected.ledgerRevision !== snapshot.balance.ledgerRevision) {
+  if (expected.version !== (record.version ?? current.audit.get(id)?.length)
+    || expected.ledgerRevision !== current.balance.ledgerRevision) {
     throw new Error('記録が変わりました。もう一度変更内容を確認してください。');
   }
-  return record;
+  return { record, pair };
 }
 
 export function linkedPromise(timeline: readonly TimelineItem[], expenseId: string) {
@@ -373,16 +610,16 @@ export function linkedPromise(timeline: readonly TimelineItem[], expenseId: stri
   return related.find(item => !item.canceledAt) ?? related[0];
 }
 
-function prepareExpenseEdit(id: string, input: NewExpense, expected: RecordVersion, at: string) {
-  const before = recordForChange(id, expected);
+function prepareExpenseEdit(id: string, input: NewExpense, expected: RecordVersion, at: string, current = snapshot) {
+  const { record: before, pair } = recordForChange(id, expected, current);
   if (before.kind !== 'expense' || before.canceledAt) throw new Error('この支払いは編集できません。');
 
   const after = buildExpense(input, id);
   const changes: PendingChange[] = [{ action: 'edited', before, after }];
-  const promise = linkedPromise(records, id);
+  const promise = linkedPromise(pair.records, id);
   if (input.expenseType === 'gift_promise') {
     const existing = before.expenseType === 'gift_promise' ? promise : undefined;
-    const next = buildPromise(input, after, existing?.id ?? `promise-new-${expected.ledgerRevision + 1}`);
+    const next = buildPromise(input, after, existing?.id ?? newRecordId('promise', pair.id, expected.ledgerRevision + 1));
     if (!existing) {
       changes.push({ action: 'created', after: next });
     } else if (next.title !== existing.title || next.dueOn !== existing.dueOn
@@ -398,7 +635,7 @@ function prepareExpenseEdit(id: string, input: NewExpense, expected: RecordVersi
   return { before, after, changes };
 }
 
-function applyChanges(changes: readonly PendingChange[]) {
+function applyChanges(changes: readonly PendingChange[], records = requirePair().records) {
   const replacements = new Map(changes.map(change => [change.after.id, change.after]));
   return [
     ...records.map(record => replacements.get(record.id) ?? record),
@@ -406,15 +643,16 @@ function applyChanges(changes: readonly PendingChange[]) {
   ];
 }
 
-function previewBalance(changes: readonly PendingChange[]) {
-  const projected = projectHome(applyChanges(changes), snapshot.balance.ledgerRevision, snapshot.appState, snapshot.audit);
-  return { netBefore: snapshot.balance.netAYen, netAfter: projected.balance.netAYen };
+function previewBalance(changes: readonly PendingChange[], current: LedgerSnapshot) {
+  const { ledger, records } = pairForPreview(current);
+  const projected = projectHome(applyChanges(changes, records), ledger.balance.ledgerRevision, ledger.partner, ledger.audit);
+  return { netBefore: current.balance.netAYen, netAfter: projected.balance.netAYen };
 }
 
-export function previewExpenseEdit(id: string, input: NewExpense, expected: RecordVersion) {
-  const { before, after, changes } = prepareExpenseEdit(id, input, expected, new Date().toISOString());
+export function previewExpenseEdit(id: string, input: NewExpense, expected: RecordVersion, current = snapshot) {
+  const { before, after, changes } = prepareExpenseEdit(id, input, expected, new Date().toISOString(), current);
   return {
-    before, after, ...previewBalance(changes),
+    before, after, ...previewBalance(changes, current),
     cancelsPromise: changes.some(change => change.action === 'canceled'),
   };
 }
@@ -425,8 +663,8 @@ export function updateExpense(id: string, input: NewExpense, expected: RecordVer
   saveChanges(applyChanges(changes), changes, at);
 }
 
-function prepareRecordStatus(id: string, cancel: boolean, expected: RecordVersion, at: string) {
-  const before = recordForChange(id, expected);
+function prepareRecordStatus(id: string, cancel: boolean, expected: RecordVersion, at: string, current = snapshot) {
+  const { record: before, pair } = recordForChange(id, expected, current);
   if (before.kind === 'promise' || Boolean(before.canceledAt) === cancel) {
     throw new Error('この記録の状態を変更できません。');
   }
@@ -436,7 +674,7 @@ function prepareRecordStatus(id: string, cancel: boolean, expected: RecordVersio
     after: { ...before, canceledAt: cancel ? at : null },
   }];
   if (cancel && before.kind === 'expense') {
-    for (const item of records) {
+    for (const item of pair.records) {
       if (item.kind === 'promise' && item.expenseId === id && !item.canceledAt) {
         changes.push({ action: 'canceled', before: item, after: { ...item, canceledAt: at } });
       }
@@ -445,8 +683,8 @@ function prepareRecordStatus(id: string, cancel: boolean, expected: RecordVersio
   return changes;
 }
 
-export function previewRecordStatus(id: string, cancel: boolean, expected: RecordVersion) {
-  return previewBalance(prepareRecordStatus(id, cancel, expected, new Date().toISOString()));
+export function previewRecordStatus(id: string, cancel: boolean, expected: RecordVersion, current = snapshot) {
+  return previewBalance(prepareRecordStatus(id, cancel, expected, new Date().toISOString(), current), current);
 }
 
 export function setRecordCanceled(id: string, cancel: boolean, expected: RecordVersion) {
@@ -460,12 +698,12 @@ export async function loadHome(scenario: HomeScenario = 'sample'): Promise<HomeD
     case 'sample':
       return getLedgerSnapshot();
     case 'zero':
-      return projectHome([
+      return withDisplayName(projectHome([
         ...fixtureRecords,
         { ...exampleSettlement, id: 'settlement-2', occurredOn: '2026-11-18', amountYen: 200 },
-      ], 10, fixtureAppState, initialSnapshot.audit);
+      ], 10, partner, initialSnapshot.audit), viewer.displayName);
     case 'empty':
-      return projectHome([], 0, fixtureAppState, new Map());
+      return emptyLedger;
     case 'error':
       throw new Error('通信できないため、記録を読み込めませんでした。');
   }

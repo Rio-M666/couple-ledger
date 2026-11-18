@@ -6,8 +6,8 @@ import { FieldError, PrimaryButton, SecondaryButton, useControlStyles } from '@/
 import { Screen, SheetHeader } from '@/components/screen';
 import { expenseStatus, expenseStatusLabels, expenseTypeLabels } from '@/data/expense';
 import { balanceDirection, formatFullDate, formatYen } from '@/data/format';
-import { previewRecordStatus, setRecordCanceled, type RecordVersion } from '@/data/home';
-import type { LedgerSnapshot, MemberSlot, TimelineItem } from '@/data/types';
+import { previewRecordStatus, setRecordCanceled, type RecordVersion } from '@/data/ledger';
+import type { MemberSlot, PairLedger, TimelineItem } from '@/data/types';
 import { useLedger } from '@/hooks/use-ledger';
 import { colors, spacing, typography, useThemeScheme } from '@/theme';
 
@@ -23,11 +23,17 @@ type Confirmation = {
 };
 
 export default function RecordScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
-  const snapshot = useLedger();
-  const record = snapshot.timeline.find(item => item.id === id);
+  const { id, pairId } = useLocalSearchParams<{ id: string; pairId?: string }>();
+  const { activePair, pastPairs } = useLedger();
+  const pair = pairId ? pastPairs.find(item => item.id === pairId) : activePair;
+  const record = pair?.timeline.find(item => item.id === id);
+  const close = () => {
+    if (router.canGoBack()) router.back();
+    else if (pairId) router.replace({ pathname: '/past-pairs/[id]', params: { id: pairId } });
+    else router.replace(activePair ? '/history' : '/onboarding');
+  };
 
-  if (!record) {
+  if (!record || !pair) {
     return (
       <Screen sheet>
         <SheetHeader title="記録の詳細" onClose={close} />
@@ -35,15 +41,10 @@ export default function RecordScreen() {
       </Screen>
     );
   }
-  return <RecordDetails key={record.id} record={record} snapshot={snapshot} />;
+  return <RecordDetails key={`${pair.id}:${record.id}`} record={record} snapshot={pair} onClose={close} />;
 }
 
-function close() {
-  if (router.canGoBack()) router.back();
-  else router.replace('/history');
-}
-
-function RecordDetails({ record, snapshot }: { record: TimelineItem; snapshot: LedgerSnapshot }) {
+function RecordDetails({ record, snapshot, onClose }: { record: TimelineItem; snapshot: PairLedger; onClose: () => void }) {
   const controls = useControlStyles();
   const color = colors[useThemeScheme()];
   const [confirmation, setConfirmation] = useState<Confirmation>();
@@ -60,7 +61,7 @@ function RecordDetails({ record, snapshot }: { record: TimelineItem; snapshot: L
 
   function review() {
     setError(undefined);
-    const expected = { version: changes.length, ledgerRevision: snapshot.balance.ledgerRevision };
+    const expected = { pairId: snapshot.id, version: record.version ?? changes.length, ledgerRevision: snapshot.balance.ledgerRevision };
     try {
       setConfirmation({ expected, impact: previewRecordStatus(record.id, canceling, expected) });
     } catch (error) {
@@ -68,14 +69,14 @@ function RecordDetails({ record, snapshot }: { record: TimelineItem; snapshot: L
     }
   }
 
-  function confirm() {
+  async function confirm() {
     if (!confirmation) return;
     if (stale) {
       review();
       return;
     }
     try {
-      setRecordCanceled(record.id, canceling, confirmation.expected);
+      await setRecordCanceled(record.id, canceling, confirmation.expected);
       setConfirmation(undefined);
       setError(undefined);
     } catch (error) {
@@ -90,7 +91,7 @@ function RecordDetails({ record, snapshot }: { record: TimelineItem; snapshot: L
 
   return (
     <Screen sheet>
-      <SheetHeader title="記録の詳細" onClose={close} />
+      <SheetHeader title="記録の詳細" onClose={onClose} />
       <View style={styles.section}>
         <Text style={controls.label}>{recordLabel}・{status}</Text>
         <Text accessibilityRole="header" style={[typography.heading, { color: color.ink }]}>{record.title}</Text>
@@ -143,7 +144,7 @@ function RecordDetails({ record, snapshot }: { record: TimelineItem; snapshot: L
         ))}
       </View>
 
-      {record.kind !== 'promise' && (
+      {snapshot.status === 'active' && record.kind !== 'promise' && (
         <View style={styles.section}>
           {confirmation ? (
             <>
@@ -194,11 +195,11 @@ function DetailRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function describeBalance(net: number, { viewer, partner }: LedgerSnapshot) {
+function describeBalance(net: number, { viewer, partner }: PairLedger) {
   return net === 0 ? '¥0' : `${balanceDirection(net, viewer.slot, partner.displayName)} ${formatYen(Math.abs(net))}`;
 }
 
-function allocationDetails(record: TimelineItem, { allocations, timeline }: LedgerSnapshot) {
+function allocationDetails(record: TimelineItem, { allocations, timeline }: PairLedger) {
   const lines: { key: string; text: string }[] = [];
   if (record.canceledAt || record.kind === 'promise') return lines;
 

@@ -7,7 +7,9 @@ import { colors, useThemeScheme } from '@/theme';
 export const unstable_settings = { anchor: '(tabs)' };
 
 export default function RootLayout() {
-  const paired = useLedger().appState.status === 'paired';
+  const { status } = useLedger().appState;
+  const paired = status === 'paired';
+  const named = paired || status === 'unpaired';
   const scheme = useThemeScheme();
   const palette = colors[scheme];
   const baseTheme = scheme === 'dark' ? DarkTheme : DefaultTheme;
@@ -31,10 +33,18 @@ export default function RootLayout() {
           <Stack.Screen name="(tabs)" />
           <Stack.Screen name="expense/new" options={{ presentation: 'modal' }} />
           <Stack.Screen name="settlement/new" options={{ presentation: 'modal' }} />
-          <Stack.Screen name="record/[id]" options={{ presentation: 'modal' }} />
         </Stack.Protected>
         <Stack.Protected guard={!paired} redirectTo="/">
           <Stack.Screen name="onboarding" />
+        </Stack.Protected>
+        <Stack.Protected guard={status === 'unpaired'}>
+          <Stack.Screen name="account-settings" />
+        </Stack.Protected>
+        <Stack.Protected guard={named}>
+          <Stack.Screen name="past-pairs/index" />
+          <Stack.Screen name="past-pairs/[id]" />
+          <Stack.Screen name="revival/[pairId]" />
+          <Stack.Screen name="record/[id]" options={{ presentation: 'modal' }} />
         </Stack.Protected>
       </Stack>
     </ThemeProvider>

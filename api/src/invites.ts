@@ -64,10 +64,22 @@ function requireUsableInvite({ invite, expired, userId, displayName }: Awaited<R
   return { userId, displayName };
 }
 
-export async function previewInvite(db: Queryable, secret: string, input: Record<string, unknown>) {
+async function findArchivedPair(db: Queryable, inviterId: string, inviteeId: string) {
+  const { rows: [pair] } = await db.query<{ pairId: string }>(
+    `select p.id as "pairId" from public.pairs p
+       join public.pair_members a on a.pair_id = p.id and a.user_id = $1
+       join public.pair_members b on b.pair_id = p.id and b.user_id = $2
+      where p.status = 'archived' order by p.archived_at desc, p.id limit 1`,
+    [inviterId, inviteeId],
+  );
+  return pair;
+}
+
+export async function previewInvite(db: Queryable, secret: string, input: Record<string, unknown>, userId: string) {
   const row = await lookupInvite(db, credentialDigest(secret, input));
   const inviter = requireUsableInvite(row);
-  return { inviterDisplayName: inviter.displayName, pairStatus: row.pairStatus };
+  const archived = inviter.userId === userId ? undefined : await findArchivedPair(db, inviter.userId, userId);
+  return { inviterDisplayName: inviter.displayName, pairStatus: row.pairStatus, archivedPairId: archived?.pairId };
 }
 
 export async function issueInvite({ tx, pairId, userId }: WriteRequest, secret: string) {
@@ -128,13 +140,7 @@ export async function acceptInvite({ tx, userId, body }: WriteRequest, secret: s
     throw new ApiError(409, "pair_not_pending", "The pair has no available slot");
   }
   await requireUnpaired(tx, userIds);
-  const { rows: [archived] } = await tx.query<{ pairId: string }>(
-    `select p.id as "pairId" from public.pairs p
-       join public.pair_members a on a.pair_id = p.id and a.user_id = $1
-       join public.pair_members b on b.pair_id = p.id and b.user_id = $2
-      where p.status = 'archived' order by p.archived_at desc, p.id limit 1`,
-    userIds,
-  );
+  const archived = await findArchivedPair(tx, inviter.user_id, userId);
   if (archived) throw new ApiError(409, "revival_required", "Request revival of the archived pair", archived);
 
   const { rows: [member] } = await tx.query<{ id: string; user_id: string; slot: "b" }>(

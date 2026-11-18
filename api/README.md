@@ -13,11 +13,21 @@ npm test
 
 ## アダプタ
 
-`src/db.ts` の `Database` は `query(text, params)` と `transaction(callback)` を要求します。本番接続では `pg` のサービス用接続（Supabase の `service_role` 相当の DB 権限）を使用します。トランザクション中はプールから取得した同じ接続で READ COMMITTED の `BEGIN`、すべての SQL、`COMMIT` または `ROLLBACK` を実行し、接続を返却します。アダプタは PostgreSQL の標準 JSON / JSONB デコードと ISO の日付出力を使用します。
+`src/db-postgres.ts` は postgres.js を使います。Supavisor のトランザクションプーラ（ポート6543）に `prepare: false` で接続します。`transaction` は `sql.begin` で同じ接続を確保し、READ COMMITTED で実行します。Worker はクライアントを再利用し、各 DB 操作の終了時にそのリクエストの TLS 接続を閉じます。
 
-認証ミドルウェアは信頼された `x-auth-user-id` ヘッダから UUID を取得します。本番公開時は Supabase JWT の検証結果から認証ユーザーIDを取得するミドルウェアに差し替えます。
+`createApp(db, options?)` の `inviteSecret` と `authenticate` で招待署名鍵とユーザー認証を指定できます。ローカルの既定値は `process.env.INVITE_HMAC_SECRET` と `x-auth-user-id` ヘッダです。Worker は Supabase の JWKS で `Authorization: Bearer` の JWT を検証し、`authenticated` audience とプロジェクトの issuer を確認します。
 
-`createApp(db)` の呼び出し前にサーバー環境変数 `INVITE_HMAC_SECRET` を設定してください。未設定・空白のみの場合はアプリの初期化でエラーになります。アプリの各インスタンスは同じ秘密鍵を使用します。統合テストは専用の鍵を設定します。
+## Cloudflare Workers
+
+Wrangler CLI はグローバルまたは別途インストールしたものを使用します。`api/` で Wrangler の secret として次の名前を登録してから `npm run deploy` を実行します。
+
+- `DATABASE_URL`
+- `INVITE_HMAC_SECRET`
+- `SUPABASE_URL`
+
+`GET /health` は認証なしで `{"ok":true}` を返します。DB 接続は Supabase マイグレーションを適用し、デプロイ後に認証付きの `GET /ledger` と書き込みで確認します。
+
+Expo アプリを接続する場合は `app/.env.example` の変数を設定し、`EXPO_PUBLIC_API_URL` には Worker の URL、`EXPO_PUBLIC_DATA_SOURCE` には `api` を指定します。データソースの既定値はフィクスチャです。
 
 ## API
 
@@ -27,11 +37,12 @@ npm test
 
 | メソッド | パス | 本文・クエリ | 成功応答 |
 | --- | --- | --- | --- |
+| GET | `/ledger` | — | 200 `{ displayName, pairs }`。認証ユーザーが所属するペアと台帳を返します。 |
 | PUT | `/profile` | `displayName` | 200 `{ profile: { userId, displayName } }` |
 | POST | `/pairs` | — | 201 `{ pair }` |
 | GET | `/pairs/:pairId/members` | — | 200 `{ members }` |
 | POST | `/pairs/:pairId/invites` | — | 201 `{ invite, code, token }`。同じキーの再試行は `{ invite }`。 |
-| GET | `/invites/preview` | `code` または `token` | 200 `{ inviterDisplayName, pairStatus }` |
+| GET | `/invites/preview` | `code` または `token` | 200 `{ inviterDisplayName, pairStatus }`。相手との過去のペアがあれば `archivedPairId` も返します。 |
 | POST | `/invites/accept` | `code` または `token` | 200 `{ pair }` |
 | POST | `/pairs/:pairId/archive` | — | 200 `{ pair }` |
 | POST | `/pairs/:pairId/revival-requests` | — | 201 `{ revivalRequest }`。承認待ちがあれば 200 で既存の申請を返します。 |
@@ -49,10 +60,10 @@ npm test
 | GET | `/balance` | — |
 | GET | `/expenses` | — |
 | POST | `/expenses` | `amountYen` が必須。任意で `title`、`payerSlot`、`expenseType`、`splitMode`、`counterpartyShareYen`、`occurredOn`。 `gift_promise` では `promise.body` が必須。 `promise.assigneeSlot`、`promise.dueOn` は任意。 |
-| POST | `/expenses/:id/update` | `version` と `ledgerRevision` が必須。変更する項目は作成と同じ名前。 |
-| POST | `/expenses/:id/cancel`、`/expenses/:id/restore` | — |
-| POST | `/settlements` | `amountYen` が必須。 `settledOn` は任意。方向は認証ユーザーから相手へ。 |
-| POST | `/settlements/:id/cancel`、`/settlements/:id/restore` | — |
+| POST | `/expenses/:id/update` | `version` と `ledgerRevision` が必須。変更する項目は作成と同じ名前。既存の約束の本文・期限は `promiseUpdate` に指定します。 |
+| POST | `/expenses/:id/cancel`、`/expenses/:id/restore` | 任意で `version` と `ledgerRevision`。 |
+| POST | `/settlements` | `amountYen` が必須。 `settledOn`、`senderSlot`、`targets` は任意。送金者の既定値は認証ユーザー。充当先の形式は下記と同じで、精算と同じトランザクションで保存します。 |
+| POST | `/settlements/:id/cancel`、`/settlements/:id/restore` | 任意で `version` と `ledgerRevision`。 |
 | POST | `/settlements/:id/targets` | `targets` に `{ expenseId, targetAmountYen }` の配列。空配列ですべて解除。 |
 | POST | `/promises/:id/status` | `action` に `complete`、`cancel`、`restore` のいずれか。 |
 

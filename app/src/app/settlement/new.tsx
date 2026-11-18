@@ -9,7 +9,7 @@ import {
 import { Screen, SheetHeader } from '@/components/screen';
 import { expenseDateError, yenInputError } from '@/data/expense';
 import { balanceDirection, businessDate, formatShortDate, formatYen } from '@/data/format';
-import { createSettlement, getLedgerSnapshot, previewSettlement, settlementCandidates } from '@/data/home';
+import { createSettlement, getLedgerSnapshot, previewSettlement, settlementCandidates } from '@/data/ledger';
 import type { ExpenseRecord, MemberSlot, NewSettlement } from '@/data/types';
 import { useLedger } from '@/hooks/use-ledger';
 import { colors, layout, spacing, typography, useThemeScheme } from '@/theme';
@@ -57,7 +57,7 @@ export default function NewSettlementScreen() {
     setSaveError(undefined);
   }
 
-  function save() {
+  async function save() {
     if (saved.current) return;
     setSubmitted(true);
     if (!input || !preview || 'error' in preview) return;
@@ -68,7 +68,7 @@ export default function NewSettlementScreen() {
     }
     saved.current = true;
     try {
-      createSettlement(input);
+      await createSettlement(input);
     } catch (error) {
       saved.current = false;
       setSaveError(error instanceof Error ? error.message : '保存できませんでした。もう一度お試しください。');

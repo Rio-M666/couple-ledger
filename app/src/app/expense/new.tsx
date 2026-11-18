@@ -17,7 +17,7 @@ import {
   yenInputError,
 } from '@/data/expense';
 import { balanceDirection, businessDate, formatShortDate, formatYen } from '@/data/format';
-import { createExpense, linkedPromise, previewExpenseEdit, updateExpense, type RecordVersion } from '@/data/home';
+import { createExpense, linkedPromise, previewExpenseEdit, updateExpense, type RecordVersion } from '@/data/ledger';
 import type { ExpenseRecord, ExpenseType, MemberSlot, NewExpense } from '@/data/types';
 import { useLedger } from '@/hooks/use-ledger';
 import { colors, layout, spacing, typography, useThemeScheme, type ColorTokens } from '@/theme';
@@ -59,7 +59,7 @@ type EditReview = {
 
 function ExpenseForm({ expense }: { expense?: ExpenseRecord }) {
   const styles = stylesByScheme[useThemeScheme()];
-  const { viewer, partner, timeline, audit, balance } = useLedger();
+  const { viewer, partner, timeline, audit, balance, activePair } = useLedger();
   const members = [viewer, partner].map(member => ({ value: member.slot, label: member.displayName }));
   const promise = expense && linkedPromise(timeline, expense.id);
   const [amountText, setAmountText] = useState(expense ? String(expense.amountYen) : '');
@@ -99,7 +99,7 @@ function ExpenseForm({ expense }: { expense?: ExpenseRecord }) {
   const payerName = payerIsViewer ? viewer.displayName : partner.displayName;
   const assignee = otherSlot(payer) === viewer.slot ? viewer : partner;
 
-  function save() {
+  async function save() {
     if (saved.current) return;
     setSubmitted(true);
     setBalanceError(undefined);
@@ -123,12 +123,15 @@ function ExpenseForm({ expense }: { expense?: ExpenseRecord }) {
 
     try {
       if (expense) {
-        const expected = { version: audit.get(expense.id)?.length ?? 0, ledgerRevision: balance.ledgerRevision };
+        if (!activePair) throw new Error('解散済みの記録は変更できません。');
+        const expected = {
+          pairId: activePair.id, version: expense.version ?? audit.get(expense.id)?.length ?? 0, ledgerRevision: balance.ledgerRevision,
+        };
         setReview({ input, expected, impact: previewExpenseEdit(expense.id, input, expected) });
         return;
       }
       saved.current = true;
-      createExpense(input);
+      await createExpense(input);
     } catch (error) {
       saved.current = false;
       if (error instanceof RangeError) {
@@ -147,7 +150,7 @@ function ExpenseForm({ expense }: { expense?: ExpenseRecord }) {
     const beforeAmount = formatYen(Math.abs(netBefore));
     const afterAmount = formatYen(Math.abs(netAfter));
 
-    function confirm() {
+    async function confirm() {
       if (saved.current || !expense || !review) return;
       if (stale) {
         setReview(undefined);
@@ -155,7 +158,7 @@ function ExpenseForm({ expense }: { expense?: ExpenseRecord }) {
       }
       saved.current = true;
       try {
-        updateExpense(expense.id, review.input, review.expected);
+        await updateExpense(expense.id, review.input, review.expected);
       } catch (error) {
         saved.current = false;
         setSaveError(error instanceof Error ? error.message : '保存できませんでした。もう一度お試しください。');

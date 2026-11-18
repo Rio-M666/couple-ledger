@@ -16,6 +16,7 @@ type TimelineRecord = {
   title: string;
   occurredOn: string; // YYYY-MM-DD business date
   canceledAt: string | null;
+  version?: number;
 };
 
 export type ExpenseType = 'split' | 'gift' | 'gift_promise';
@@ -83,14 +84,41 @@ export type AppState =
   | { status: 'signed-out' | 'needs-name' }
   | { status: 'unpaired' | 'paired'; displayName: string };
 
-export type LedgerSnapshot = HomeData & {
-  appState: AppState;
+export type LedgerData = HomeData & {
   audit: ReadonlyMap<string, readonly AuditEntry[]>;
   allocations: {
     settlements: readonly SettlementAllocation[];
     offsets: readonly OffsetAllocation[];
     prepayments: ReadonlyMap<string, number>;
   };
+};
+
+export type RevivalRequest = {
+  id: string;
+  requesterSlot: MemberSlot;
+  status: 'pending' | 'expired' | 'approved' | 'rejected' | 'canceled' | 'invalidated';
+  requestedAt: number;
+  expiresAt: number;
+  decidedAt?: number;
+};
+
+export type PairLedger = LedgerData & {
+  id: string;
+  linkedOn: string;
+  revivalRequests: readonly RevivalRequest[];
+} & (
+  | { status: 'active'; archivedAt: null }
+  | { status: 'archived'; archivedAt: number }
+);
+
+export type ArchivedPair = Extract<PairLedger, { status: 'archived' }> & { partnerPairedElsewhere: boolean };
+
+export type LedgerSnapshot = LedgerData & {
+  appState: AppState;
+  activePair: Extract<PairLedger, { status: 'active' }> | null;
+  pastPairs: readonly ArchivedPair[];
+  loading?: boolean;
+  loadError?: string;
 };
 
 export type NewExpense = {

@@ -6,7 +6,7 @@ import { PrimaryButton, SecondaryButton, useControlStyles } from '@/components/c
 import { Screen } from '@/components/screen';
 import { LoadingRows, TimelineRow } from '@/components/timeline-row';
 import { balanceDirection, formatYen } from '@/data/format';
-import { loadHome, type HomeScenario } from '@/data/home';
+import { loadHome, type HomeScenario } from '@/data/ledger';
 import type { HomeData } from '@/data/types';
 import { useLedger } from '@/hooks/use-ledger';
 import { colors, layout, spacing, typography, useThemeScheme, type ColorTokens } from '@/theme';

@@ -101,6 +101,9 @@ export async function updateExpense(context: CommandContext, body: Body, id: str
   if (body.promise !== undefined && (fields.type !== "gift_promise" || attached)) {
     invalid("A promise can be supplied when adding the first promise to a gift_promise expense");
   }
+  if (body.promiseUpdate !== undefined && (fields.type !== "gift_promise" || !attached)) {
+    invalid("Only an existing promise on a gift_promise expense can be updated");
+  }
   const { rows: [row] } = await tx.query<{ record: ExpenseRecord }>(
     `update public.expenses e
         set payer_member_id = $4, title = $5, amount_yen = $6, counterparty_share_yen = $7,
@@ -113,6 +116,16 @@ export async function updateExpense(context: CommandContext, body: Body, id: str
   await audit(context, "expense", id, "update", current, expense);
   if (fields.type === "gift_promise" && !attached) {
     await createPromise(context, expense, body.promise);
+  } else if (attached && body.promiseUpdate !== undefined) {
+    const input = object(body.promiseUpdate, "promiseUpdate");
+    const promiseBody = text(input.body, "promiseUpdate.body", 4000);
+    const dueOn = input.dueOn == null ? null : date(input.dueOn, "promiseUpdate.dueOn");
+    const { rows: [updated] } = await tx.query<{ record: PromiseRecord }>(
+      `update public.promises p set body = $3, due_on = $4
+        where p.pair_id = $1 and p.id = $2 returning to_jsonb(p) as record`,
+      [pairId, attached.id, promiseBody, dueOn],
+    );
+    await audit(context, "promise", attached.id, "update", attached, updated.record);
   } else if (fields.type !== "gift_promise" && attached && attached.status !== "canceled") {
     await setPromiseStatus(context, attached, "cancel");
   }
@@ -124,21 +137,30 @@ export async function createSettlement(context: CommandContext, body: Body) {
   const amount = integer(body.amountYen, "amountYen", 1);
   const today = todayInTokyo();
   const day = body.settledOn === undefined ? today : date(body.settledOn, "settledOn", today);
+  const sender = body.senderSlot === undefined ? actorSlot : slot(body.senderSlot, "senderSlot");
   const { rows: [row] } = await tx.query<{ record: SettlementRecord }>(
     `insert into public.settlements (pair_id, sender_member_id, receiver_member_id, amount_yen, settled_on)
      values ($1, $2, $3, $4, $5) returning to_jsonb(settlements) as record`,
-    [pairId, members[actorSlot], members[otherSlot(actorSlot)], amount, day],
+    [pairId, members[sender], members[otherSlot(sender)], amount, day],
   );
   await audit(context, "settlement", row.record.id, "create", null, row.record);
+  if (body.targets !== undefined) return replaceTargets(context, body, row.record.id);
   return { settlement: row.record };
 }
 
 export async function setCanceled(
-  context: CommandContext, id: string, entity: "expense" | "settlement", action: "cancel" | "restore",
+  context: CommandContext, id: string, entity: "expense" | "settlement", action: "cancel" | "restore", body: Body,
 ) {
   const { tx, pairId } = context;
   const table = entity === "expense" ? "expenses" : "settlements";
   const current = await findRecord<ExpenseRecord | SettlementRecord>(tx, table, pairId, id);
+  if (body.version !== undefined || body.ledgerRevision !== undefined) {
+    const version = integer(body.version, "version", 1);
+    const revision = integer(body.ledgerRevision, "ledgerRevision", 0);
+    if (version !== current.version || revision !== context.ledgerRevision) {
+      throw new ApiError(409, "edit_conflict", "The record or ledger has changed");
+    }
+  }
   const cancel = action === "cancel";
   if (cancel === (current.canceled_at !== null)) invalid(`Cannot ${action} a record in its current state`);
 

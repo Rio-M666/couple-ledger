@@ -14,11 +14,13 @@ export function TimelineRow({
   first = false,
   last = false,
   showDate = false,
+  archivedPairId,
 }: {
   item: TimelineItem;
   first?: boolean;
   last?: boolean;
   showDate?: boolean;
+  archivedPairId?: string;
 }) {
   const styles = stylesByScheme[useThemeScheme()];
   const canceled = item.canceledAt !== null;
@@ -28,9 +30,10 @@ export function TimelineRow({
   const kindLabel = item.kind === 'expense' && item.expenseType !== 'split'
     ? expenseTypeLabels[item.expenseType]
     : timelineLabels[item.kind];
+  const params = archivedPairId ? { id: item.id, pairId: archivedPairId } : { id: item.id };
 
   return (
-    <Link href={{ pathname: '/record/[id]', params: { id: item.id } }} asChild>
+    <Link href={{ pathname: '/record/[id]', params }} asChild>
       <Pressable accessibilityRole="link" style={StyleSheet.flatten([styles.row, !first && styles.rowDivider])}>
         <View aria-hidden style={styles.marker}>
           <View style={[styles.rail, first && styles.hiddenRail]} />

@@ -1,4 +1,5 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
+import { cors } from "hono/cors";
 import type { Database } from "./db";
 import { safeInteger } from "./db";
 import { ApiError, normalizeUuid, notFound, uuid } from "./input";
@@ -8,20 +9,35 @@ import { replaceProjection } from "./ledger";
 import { archivePair, createPair, readMembers, requestRevival, resolveRevival, saveProfile } from "./lifecycle";
 import { lockPair, type CommandContext, type ExpenseRecord } from "./records";
 import { changePromiseStatus, createExpense, createSettlement, replaceTargets, setCanceled, updateExpense } from "./commands";
+import { readLedger } from "./read-ledger";
 
 export type { Database, Queryable } from "./db";
 
 type LedgerCommand = (context: CommandContext, body: Record<string, unknown>, id: string) => Promise<Record<string, unknown>>;
+type AppEnv = { Variables: { userId: string } };
+type AppOptions = {
+  inviteSecret?: string;
+  authenticate?: (c: Context<AppEnv>) => Promise<string | null>;
+};
 
-export function createApp(db: Database) {
-  const inviteSecret = process.env.INVITE_HMAC_SECRET;
+export function createApp(db: Database, options: AppOptions = {}) {
+  const inviteSecret = options.inviteSecret ?? process.env.INVITE_HMAC_SECRET;
   if (!inviteSecret?.trim()) throw new Error("INVITE_HMAC_SECRET must be configured");
-  const app = new Hono<{ Variables: { userId: string } }>();
+  const app = new Hono<AppEnv>();
 
-  for (const path of ["/pairs/*", "/invites/*", "/revival-requests/*", "/profile"]) {
+  app.use("*", cors({
+    allowMethods: ["GET", "POST", "PUT", "OPTIONS"],
+    allowHeaders: ["Authorization", "Content-Type", "Idempotency-Key"],
+  }));
+  app.get("/health", (c) => c.json({ ok: true }));
+
+  for (const path of ["/pairs/*", "/invites/*", "/revival-requests/*", "/profile", "/ledger"]) {
     app.use(path, async (c, next) => {
-      const userId = normalizeUuid(c.req.header("x-auth-user-id"));
-      if (!userId) throw new ApiError(401, "unauthenticated", "A valid x-auth-user-id is required");
+      const userId = normalizeUuid(options.authenticate ? await options.authenticate(c) : c.req.header("x-auth-user-id"));
+      if (!userId) {
+        const message = options.authenticate ? "A valid Bearer token is required" : "A valid x-auth-user-id is required";
+        throw new ApiError(401, "unauthenticated", message);
+      }
       c.set("userId", userId);
       await next();
     });
@@ -85,14 +101,19 @@ export function createApp(db: Database) {
   ledgerPost("/pairs/:pairId/expenses/:id/update", updateExpense);
   ledgerPost("/pairs/:pairId/settlements", createSettlement, 201);
   for (const action of ["cancel", "restore"] as const) {
-    ledgerPost(`/pairs/:pairId/expenses/:id/${action}`, (context, _body, id) => setCanceled(context, id, "expense", action));
-    ledgerPost(`/pairs/:pairId/settlements/:id/${action}`, (context, _body, id) => setCanceled(context, id, "settlement", action));
+    ledgerPost(`/pairs/:pairId/expenses/:id/${action}`, (context, body, id) => setCanceled(context, id, "expense", action, body));
+    ledgerPost(`/pairs/:pairId/settlements/:id/${action}`, (context, body, id) => setCanceled(context, id, "settlement", action, body));
   }
   ledgerPost("/pairs/:pairId/settlements/:id/targets", replaceTargets);
   ledgerPost("/pairs/:pairId/promises/:id/status", changePromiseStatus);
 
   app.put("/profile", async (c) => {
     return c.json(await saveProfile(db, c.get("userId"), parseBody(await c.req.text())));
+  });
+
+  app.get("/ledger", async (c) => {
+    c.header("Cache-Control", "no-store");
+    return c.json(await readLedger(db, c.get("userId")));
   });
 
   post("/pairs", createPair);
@@ -106,7 +127,7 @@ export function createApp(db: Database) {
   app.get("/invites/preview", async (c) => {
     c.header("Cache-Control", "no-store");
     const { code, token } = c.req.query();
-    return c.json(await previewInvite(db, inviteSecret, { code, token }));
+    return c.json(await previewInvite(db, inviteSecret, { code, token }, c.get("userId")));
   });
 
   app.get("/pairs/:pairId/members", async (c) => {
