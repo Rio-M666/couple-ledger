@@ -27,6 +27,7 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "icon": "./assets/icon.png"
   }
 }
