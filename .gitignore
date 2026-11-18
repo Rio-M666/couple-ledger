@@ -4,3 +4,5 @@ codex-*-run.log
 dist/
 .env*
 !.env.example
+app/review/
+app/dist/

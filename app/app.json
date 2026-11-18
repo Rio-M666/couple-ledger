@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "Couple Ledger",
+    "slug": "couple-ledger",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "coupleledger",
+    "userInterfaceStyle": "automatic",
+    "android": {
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "server"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#FAF8F4",
+          "dark": {
+            "backgroundColor": "#16140F"
+          }
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}
