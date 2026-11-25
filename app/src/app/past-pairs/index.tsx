@@ -1,7 +1,7 @@
 import { Link, router } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
-import { useControlStyles } from '@/components/controls';
+import { HoverPressable, useControlStyles } from '@/components/controls';
 import { Screen, SheetHeader } from '@/components/screen';
 import { balanceDirection, businessDate, formatShortDate, formatYen } from '@/data/format';
 import { useLedger } from '@/hooks/use-ledger';
@@ -27,9 +27,14 @@ export default function PastPairsScreen() {
             const direction = balanceDirection(netAYen, pair.viewer.slot, pair.partner.displayName);
             return (
               <Link key={pair.id} href={{ pathname: '/past-pairs/[id]', params: { id: pair.id } }} asChild>
-                <Pressable
+                <HoverPressable
                   accessibilityRole="link"
-                  style={StyleSheet.flatten([styles.row, { borderColor: color.hairline }])}>
+                  interactionStyle={({ pressed, hovered }) => [
+                    styles.row,
+                    { borderColor: color.hairline },
+                    hovered && { backgroundColor: color.surface },
+                    pressed && controls.pressed,
+                  ]}>
                   <View style={styles.details}>
                     <Text style={controls.body}>{pair.partner.displayName}</Text>
                     <Text style={[controls.label, typography.numbers]}>
@@ -40,7 +45,7 @@ export default function PastPairsScreen() {
                     </Text>
                   </View>
                   <Text aria-hidden style={controls.label}>→</Text>
-                </Pressable>
+                </HoverPressable>
               </Link>
             );
           })}

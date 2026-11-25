@@ -1,6 +1,7 @@
 import { Link } from 'expo-router';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
+import { HoverPressable } from '@/components/controls';
 import { expenseStatus, expenseStatusLabels, expenseTypeLabels } from '@/data/expense';
 import { formatShortDate, formatYen } from '@/data/format';
 import type { TimelineItem } from '@/data/types';
@@ -34,7 +35,14 @@ export function TimelineRow({
 
   return (
     <Link href={{ pathname: '/record/[id]', params }} asChild>
-      <Pressable accessibilityRole="link" style={StyleSheet.flatten([styles.row, !first && styles.rowDivider])}>
+      <HoverPressable
+        accessibilityRole="link"
+        interactionStyle={({ pressed, hovered }) => [
+          styles.row,
+          !first && styles.rowDivider,
+          hovered && styles.hovered,
+          pressed && styles.pressed,
+        ]}>
         <View aria-hidden style={styles.marker}>
           <View style={[styles.rail, first && styles.hiddenRail]} />
           <View style={[styles.node, styles[item.kind], canceled && styles.canceledNode]} />
@@ -73,7 +81,7 @@ export function TimelineRow({
             )}
           </View>
         )}
-      </Pressable>
+      </HoverPressable>
     </Link>
   );
 }
@@ -104,6 +112,8 @@ function createStyles(color: ColorTokens) {
       gap: spacing.md,
       minHeight: layout.rowMinHeight,
     },
+    pressed: { opacity: 0.8 },
+    hovered: { backgroundColor: color.surface },
     rowDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.hairline },
     marker: { width: spacing.md, alignItems: 'center' },
     rail: { flex: 1, width: StyleSheet.hairlineWidth, backgroundColor: color.hairline },

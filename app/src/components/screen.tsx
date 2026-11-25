@@ -27,7 +27,7 @@ export function SheetHeader({ title, onClose }: { title: string; onClose: () => 
   return (
     <View style={styles.header}>
       <Text accessibilityRole="header" style={[styles.title, { color: color.ink }]}>{title}</Text>
-      <Pressable accessibilityRole="button" onPress={onClose} style={styles.close}>
+      <Pressable accessibilityRole="button" onPress={onClose} style={({ pressed }) => [styles.close, pressed && styles.pressed]}>
         <Text style={[styles.closeLabel, { color: color.inkMuted }]}>閉じる</Text>
       </Pressable>
     </View>
@@ -38,6 +38,7 @@ const styles = StyleSheet.create({
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { ...typography.screenTitle, flexShrink: 1 },
   close: { minHeight: layout.choiceHeight, justifyContent: 'center', paddingLeft: spacing.lg },
+  pressed: { opacity: 0.8 },
   closeLabel: typography.body,
   screen: { flex: 1 },
   scrollContent: { alignItems: 'center' },

@@ -2,7 +2,7 @@ import { Link, router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { PrimaryButton, SecondaryButton, useControlStyles } from '@/components/controls';
+import { HoverPressable, PrimaryButton, SecondaryButton, useControlStyles } from '@/components/controls';
 import { Screen } from '@/components/screen';
 import { LoadingRows, TimelineRow } from '@/components/timeline-row';
 import { balanceDirection, formatYen } from '@/data/format';
@@ -57,7 +57,7 @@ function Home({ scenario }: { scenario: HomeScenario }) {
       {state.status === 'error' && (
         <View style={styles.actions}>
           <Text accessibilityRole="alert" style={styles.error}>{state.reason}</Text>
-          <Pressable accessibilityRole="button" onPress={retry} style={styles.retry}>
+          <Pressable accessibilityRole="button" onPress={retry} style={({ pressed }) => [styles.retry, pressed && styles.pressed]}>
             <Text style={controls.body}>再試行</Text>
           </Pressable>
         </View>
@@ -116,10 +116,16 @@ function HomeContent({ data }: { data: HomeData }) {
             <TimelineRow key={item.id} item={item} first={index === 0} last={index === recent.length - 1} showDate />
           ))}
           <Link href="/history" asChild>
-            <Pressable accessibilityRole="link" style={styles.historyLink}>
+            <HoverPressable
+              accessibilityRole="link"
+              interactionStyle={({ pressed, hovered }) => [
+                styles.historyLink,
+                hovered && styles.historyLinkHovered,
+                pressed && styles.pressed,
+              ]}>
               <Text style={styles.body}>履歴をすべて見る</Text>
               <Text aria-hidden style={styles.muted}>→</Text>
-            </Pressable>
+            </HoverPressable>
           </Link>
         </View>
       )}
@@ -169,6 +175,8 @@ function createStyles(color: ColorTokens) {
     sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
     sectionLabel: { ...typography.small, color: color.inkMuted },
     sectionRule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: color.hairline },
+    pressed: { opacity: 0.8 },
+    historyLinkHovered: { backgroundColor: color.surface },
     historyLink: {
       flexDirection: 'row',
       alignItems: 'center',

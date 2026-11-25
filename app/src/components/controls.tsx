@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useId, useState, type ComponentPropsWithRef } from 'react';
 import {
   Platform,
   Pressable,
@@ -6,6 +6,7 @@ import {
   Text,
   TextInput,
   View,
+  type PressableStateCallbackType,
   type StyleProp,
   type TextInputProps,
   type TextStyle,
@@ -13,6 +14,15 @@ import {
 } from 'react-native';
 
 import { colors, layout, spacing, typography, useThemeScheme, type ColorTokens } from '@/theme';
+
+type HoverPressableProps = Omit<ComponentPropsWithRef<typeof Pressable>, 'style'> & {
+  interactionStyle: (state: PressableStateCallbackType & { hovered?: boolean }) => StyleProp<ViewStyle>;
+};
+
+export function HoverPressable({ interactionStyle, ...props }: HoverPressableProps) {
+  // Link asChild merges style as an object, so pass the callback separately.
+  return <Pressable {...props} style={interactionStyle} />;
+}
 
 export function useControlStyles() {
   return stylesByScheme[useThemeScheme()];
@@ -156,7 +166,7 @@ export function Disclosure({
       accessibilityRole="button"
       accessibilityState={{ expanded }}
       onPress={onPress}
-      style={styles.disclosure}>
+      style={({ pressed }) => [styles.disclosure, pressed && styles.pressed]}>
       <Text style={styles.body}>{label}</Text>
       <View aria-hidden style={[styles.chevron, expanded && styles.chevronUp]} />
     </Pressable>
@@ -236,9 +246,9 @@ function createStyles(color: ColorTokens) {
     chevron: {
       width: spacing.sm,
       height: spacing.sm,
-      marginRight: spacing.xs,
-      borderRightWidth: StyleSheet.hairlineWidth,
-      borderBottomWidth: StyleSheet.hairlineWidth,
+      marginRight: spacing.xs / 2,
+      borderRightWidth: 1.5,
+      borderBottomWidth: 1.5,
       borderColor: color.inkMuted,
       transform: [{ rotate: '45deg' }],
     },

@@ -1,10 +1,10 @@
 import { router } from 'expo-router';
 import { useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { AmountInput } from '@/components/amount-input';
 import {
-  ChoiceGroup, Disclosure, FieldError, FieldInput, PrimaryButton, SecondaryButton, useControlStyles,
+  ChoiceGroup, Disclosure, FieldError, FieldInput, HoverPressable, PrimaryButton, SecondaryButton, useControlStyles,
 } from '@/components/controls';
 import { Screen, SheetHeader } from '@/components/screen';
 import { expenseDateError, yenInputError } from '@/data/expense';
@@ -176,11 +176,16 @@ function TargetRow({ item, checked, onPress }: { item: ExpenseRecord; checked: b
   const controls = useControlStyles();
 
   return (
-    <Pressable
+    <HoverPressable
       accessibilityRole="checkbox"
       accessibilityState={{ checked }}
       onPress={onPress}
-      style={[styles.target, { borderColor: color.hairline }]}>
+      interactionStyle={({ pressed, hovered }) => [
+        styles.target,
+        { borderColor: color.hairline },
+        hovered && { backgroundColor: color.bg },
+        pressed && controls.pressed,
+      ]}>
       <View aria-hidden style={[styles.checkbox, { borderColor: color.inkMuted }]}>
         {checked && <View style={[styles.check, { borderColor: color.ink }]} />}
       </View>
@@ -189,7 +194,7 @@ function TargetRow({ item, checked, onPress }: { item: ExpenseRecord; checked: b
         <Text style={controls.label}>{formatShortDate(item.occurredOn)}</Text>
       </View>
       <Text style={[controls.body, typography.numbers]}>残り {formatYen(item.remainingYen)}</Text>
-    </Pressable>
+    </HoverPressable>
   );
 }
 
@@ -215,8 +220,8 @@ const styles = StyleSheet.create({
   check: {
     width: spacing.xs,
     height: spacing.sm,
-    borderRightWidth: StyleSheet.hairlineWidth,
-    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderRightWidth: 1.5,
+    borderBottomWidth: 1.5,
     transform: [{ rotate: '45deg' }],
   },
   targetDetails: { flex: 1 },
