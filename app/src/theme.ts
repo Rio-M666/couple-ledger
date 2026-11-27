@@ -46,19 +46,30 @@ export const layout = {
   buttonRadius: 12,
   inputRadius: 10,
   choiceHeight: 44,
+  borderWidth: 1,
+  focusBorderWidth: 2,
+  iconStroke: 1.5,
+  iconStrokeMedium: 2,
   balanceRuleHeight: 3,
+  progressHeight: 3,
   progressMinWidth: 96,
+  primaryButtonMinWidth: 96,
+  tabIndicatorWidth: 16,
+  tabIndicatorHeight: 2,
 } as const;
 
 const numbers: Pick<TextStyle, 'fontVariant'> = { fontVariant: ['tabular-nums'] };
 
 export const typography = {
-  body: { fontSize: 15, lineHeight: 15 * 1.6 },
-  small: { fontSize: 13, lineHeight: 13 * 1.6 },
-  heading: { fontSize: 20, lineHeight: 20 * 1.4, fontWeight: '600' },
-  screenTitle: { fontSize: 17, lineHeight: 17 * 1.4, fontWeight: '600' },
-  balance: { fontSize: 48, lineHeight: 60, fontWeight: '600' },
-  amount: { fontSize: 18, lineHeight: 18 * 1.6 },
+  body: { fontSize: 15, lineHeight: 24 },
+  bodyMedium: { fontSize: 15, lineHeight: 24, fontWeight: '500' },
+  small: { fontSize: 13, lineHeight: 20 },
+  label: { fontSize: 13, lineHeight: 18, fontWeight: '500' },
+  micro: { fontSize: 12, lineHeight: 16, fontWeight: '500' },
+  heading: { fontSize: 20, lineHeight: 28, fontWeight: '600', letterSpacing: -0.2 },
+  screenTitle: { fontSize: 17, lineHeight: 24, fontWeight: '600', letterSpacing: -0.1 },
+  balance: { fontSize: 48, lineHeight: 56, fontWeight: '600', letterSpacing: -1 },
+  amount: { fontSize: 17, lineHeight: 24, fontWeight: '600', letterSpacing: -0.2 },
   numbers,
 } as const;
 

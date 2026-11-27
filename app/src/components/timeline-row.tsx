@@ -31,6 +31,10 @@ export function TimelineRow({
   const kindLabel = item.kind === 'expense' && item.expenseType !== 'split'
     ? expenseTypeLabels[item.expenseType]
     : timelineLabels[item.kind];
+  const statusLabel = canceled ? null
+    : item.kind === 'promise' ? (item.status === 'completed' ? '完了' : '未完了')
+    : item.kind === 'expense' && item.expenseType === 'split' ? expenseStatusLabels[expenseStatus(item)]
+    : null;
   const params = archivedPairId ? { id: item.id, pairId: archivedPairId } : { id: item.id };
 
   return (
@@ -48,24 +52,26 @@ export function TimelineRow({
           <View style={[styles.node, styles[item.kind], canceled && styles.canceledNode]} />
           <View style={[styles.rail, last && styles.hiddenRail]} />
         </View>
-        <View style={styles.details}>
+        <View style={[styles.details, showDate && styles.topAligned]}>
           <View style={styles.metadataLine}>
-            <Text style={styles.metadata}>{kindLabel}</Text>
-            {canceled && <Text style={styles.metadata}>取消済み</Text>}
-            {!canceled && item.kind === 'promise' && (
-              <Text style={styles.metadata}>{item.status === 'completed' ? '完了' : '未完了'}</Text>
-            )}
-            {!canceled && item.kind === 'expense' && item.expenseType === 'split' && (
-              <Text style={styles.metadata}>{expenseStatusLabels[expenseStatus(item)]}</Text>
+            <Text style={styles.metadata}>
+              {statusLabel ? `${kindLabel}・${statusLabel}` : kindLabel}
+            </Text>
+            {canceled && (
+              <Text style={styles.canceledBadge}>取消済み</Text>
             )}
           </View>
-          <Text style={[styles.body, canceled && styles.muted]}>{item.title}</Text>
+          <Text numberOfLines={2} style={[styles.title, canceled && styles.canceledTitle]}>
+            {item.title}
+          </Text>
         </View>
         {(showDate || item.kind !== 'promise') && (
-          <View style={styles.values}>
+          <View style={[styles.values, showDate && styles.topAligned]}>
             {showDate && <Text style={styles.metadata}>{formatShortDate(item.occurredOn)}</Text>}
             {item.kind !== 'promise' && (
-              <Text style={[styles.amount, canceled && styles.muted]}>{formatYen(item.amountYen)}</Text>
+              <Text style={[styles.amount, canceled && styles.canceledAmount]}>
+                {formatYen(item.amountYen)}
+              </Text>
             )}
             {item.kind === 'expense' && remainingPercent !== null && (
               <View style={styles.remaining}>
@@ -93,7 +99,9 @@ export function LoadingRows() {
     <View accessible accessibilityRole="progressbar" accessibilityLabel="読み込み中">
       {[1, 2, 3].map((row, index) => (
         <View key={row} style={[styles.row, index !== 0 && styles.rowDivider, styles.loadingRow]}>
-          <View style={styles.skeletonNode} />
+          <View style={styles.marker}>
+            <View style={styles.skeletonNode} />
+          </View>
           <View style={styles.loadingDetails}>
             <View style={styles.loadingLabel} />
             <View style={styles.loadingTitle} />
@@ -111,8 +119,10 @@ function createStyles(color: ColorTokens) {
       flexDirection: 'row',
       gap: spacing.md,
       minHeight: layout.rowMinHeight,
+      marginHorizontal: -spacing.sm,
+      paddingHorizontal: spacing.sm,
     },
-    pressed: { opacity: 0.8 },
+    pressed: { opacity: 0.78 },
     hovered: { backgroundColor: color.surface },
     rowDivider: { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: color.hairline },
     marker: { width: spacing.md, alignItems: 'center' },
@@ -122,7 +132,7 @@ function createStyles(color: ColorTokens) {
       width: spacing.sm,
       height: spacing.sm,
       borderColor: color.inkMuted,
-      borderWidth: StyleSheet.hairlineWidth,
+      borderWidth: layout.iconStroke,
     },
     expense: { borderRadius: spacing.sm, backgroundColor: color.inkMuted },
     settlement: { borderRadius: spacing.sm },
@@ -130,30 +140,66 @@ function createStyles(color: ColorTokens) {
     canceledNode: { borderColor: color.inkMuted, backgroundColor: 'transparent' },
     details: { flex: 1, justifyContent: 'center', paddingVertical: spacing.md },
     values: { alignItems: 'flex-end', justifyContent: 'center', paddingVertical: spacing.md },
-    metadataLine: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm },
+    topAligned: { justifyContent: 'flex-start' },
+    metadataLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: spacing.xs },
     metadata: { ...typography.small, ...typography.numbers, color: color.inkMuted },
-    body: { ...typography.body, color: color.ink },
+    canceledBadge: {
+      ...typography.micro,
+      color: color.inkMuted,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: color.hairline,
+      borderRadius: spacing.xs,
+      paddingHorizontal: spacing.xs,
+    },
+    title: { ...typography.bodyMedium, color: color.ink },
+    canceledTitle: { fontWeight: '400', color: color.inkMuted },
     amount: { ...typography.amount, ...typography.numbers, color: color.ink },
-    muted: { color: color.inkMuted },
+    canceledAmount: { fontWeight: '400', color: color.inkMuted },
     remaining: {
       alignSelf: 'stretch',
       gap: spacing.xs,
       minWidth: layout.progressMinWidth,
-      marginTop: spacing.xs,
+      marginTop: spacing.sm,
       alignItems: 'flex-end',
     },
     progressTrack: {
       alignSelf: 'stretch',
-      height: StyleSheet.hairlineWidth,
+      height: layout.progressHeight,
+      borderRadius: spacing.xs,
+      overflow: 'hidden',
       backgroundColor: color.hairline,
     },
-    progressFill: { height: '100%', backgroundColor: color.inkMuted },
+    progressFill: {
+      height: '100%',
+      borderRadius: spacing.xs,
+      backgroundColor: color.inkMuted,
+    },
     loadingRow: { alignItems: 'center', paddingVertical: spacing.md },
-    skeletonNode: { width: spacing.md, height: spacing.sm, backgroundColor: color.hairline },
+    skeletonNode: {
+      width: spacing.sm,
+      height: spacing.sm,
+      borderRadius: spacing.sm,
+      backgroundColor: color.hairline,
+    },
     loadingDetails: { flex: 1, gap: spacing.sm },
-    loadingLabel: { height: spacing.sm, width: spacing.xxxl, backgroundColor: color.hairline },
-    loadingTitle: { height: spacing.md, width: '45%', backgroundColor: color.hairline },
-    loadingAmount: { height: spacing.md, width: spacing.xxxl, backgroundColor: color.hairline },
+    loadingLabel: {
+      height: spacing.sm,
+      width: spacing.xxxl,
+      borderRadius: spacing.xs,
+      backgroundColor: color.hairline,
+    },
+    loadingTitle: {
+      height: spacing.md,
+      width: '45%',
+      borderRadius: spacing.xs,
+      backgroundColor: color.hairline,
+    },
+    loadingAmount: {
+      height: spacing.md,
+      width: spacing.xxxl,
+      borderRadius: spacing.xs,
+      backgroundColor: color.hairline,
+    },
   });
 }
 

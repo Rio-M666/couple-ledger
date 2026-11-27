@@ -1,8 +1,8 @@
 import { Link, router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
-import { HoverPressable, PrimaryButton, SecondaryButton, useControlStyles } from '@/components/controls';
+import { ArrowRightIcon, HoverPressable, PrimaryButton, SecondaryButton } from '@/components/controls';
 import { Screen } from '@/components/screen';
 import { LoadingRows, TimelineRow } from '@/components/timeline-row';
 import { balanceDirection, formatYen } from '@/data/format';
@@ -23,7 +23,6 @@ export default function HomeScreen() {
 
 function Home({ scenario }: { scenario: HomeScenario }) {
   const styles = stylesByScheme[useThemeScheme()];
-  const controls = useControlStyles();
   const snapshot = useLedger();
   const [state, setState] = useState<HomeState>({ status: 'loading' });
   const [attempt, setAttempt] = useState(0);
@@ -55,11 +54,9 @@ function Home({ scenario }: { scenario: HomeScenario }) {
     <Screen>
       {state.status === 'loading' && <LoadingRows />}
       {state.status === 'error' && (
-        <View style={styles.actions}>
+        <View style={styles.errorState}>
           <Text accessibilityRole="alert" style={styles.error}>{state.reason}</Text>
-          <Pressable accessibilityRole="button" onPress={retry} style={({ pressed }) => [styles.retry, pressed && styles.pressed]}>
-            <Text style={controls.body}>再試行</Text>
-          </Pressable>
+          <SecondaryButton label="再試行" onPress={retry} />
         </View>
       )}
       {state.status === 'ready' && <HomeContent data={scenario === 'sample' ? snapshot : state.data} />}
@@ -68,7 +65,9 @@ function Home({ scenario }: { scenario: HomeScenario }) {
 }
 
 function HomeContent({ data }: { data: HomeData }) {
-  const styles = stylesByScheme[useThemeScheme()];
+  const scheme = useThemeScheme();
+  const color = colors[scheme];
+  const styles = stylesByScheme[scheme];
   const { viewer, partner, balance, timeline } = data;
   const netAYen = balance.netAYen;
   const isSettled = netAYen === 0;
@@ -81,19 +80,29 @@ function HomeContent({ data }: { data: HomeData }) {
       <View>
         <View style={styles.pairHeader}>
           <View aria-hidden style={styles.initials}>
-            <View style={styles.initial}><Text style={styles.body}>{Array.from(viewer.displayName)[0]}</Text></View>
-            <View style={styles.initial}><Text style={styles.muted}>{Array.from(partner.displayName)[0]}</Text></View>
+            <View style={[styles.initial, styles.viewerInitial]}>
+              <Text style={styles.viewerInitialLabel}>{Array.from(viewer.displayName)[0]}</Text>
+            </View>
+            <View style={styles.initial}>
+              <Text style={styles.partnerInitialLabel}>{Array.from(partner.displayName)[0]}</Text>
+            </View>
           </View>
-          <Text style={styles.body}>{viewer.displayName} と {partner.displayName}</Text>
+          <Text style={styles.pairNames}>{viewer.displayName} と {partner.displayName}</Text>
         </View>
         <View style={styles.balance}>
           {timeline.length === 0 ? (
-            <Text style={styles.body}>まだ記録がありません</Text>
+            <>
+              <Text style={styles.emptyTitle}>まだ記録がありません</Text>
+              <View aria-hidden style={styles.balanceRule} />
+              <Text style={styles.note}>最初の支払いを記録すると、残高がここに表示されます。</Text>
+            </>
           ) : (
             <>
               <View style={styles.direction}>
-                {!isSettled && <Text aria-hidden style={styles.body}>→</Text>}
-                <Text style={styles.body}>{isSettled ? '清算済みです' : direction}</Text>
+                {!isSettled && <ArrowRightIcon color={color.inkMuted} />}
+                <Text style={isSettled ? styles.settledDirection : styles.directionLabel}>
+                  {isSettled ? '清算済みです' : direction}
+                </Text>
               </View>
               <Text adjustsFontSizeToFit numberOfLines={1} style={styles.balanceAmount}>{amount}</Text>
               <View aria-hidden style={styles.balanceRule} />
@@ -107,7 +116,7 @@ function HomeContent({ data }: { data: HomeData }) {
         </View>
       </View>
       {recent.length > 0 && (
-        <View>
+        <View style={styles.recentSection}>
           <View style={styles.sectionHeader}>
             <Text accessibilityRole="header" style={styles.sectionLabel}>最近の記録</Text>
             <View aria-hidden style={styles.sectionRule} />
@@ -123,8 +132,8 @@ function HomeContent({ data }: { data: HomeData }) {
                 hovered && styles.historyLinkHovered,
                 pressed && styles.pressed,
               ]}>
-              <Text style={styles.body}>履歴をすべて見る</Text>
-              <Text aria-hidden style={styles.muted}>→</Text>
+              <Text style={styles.historyLinkLabel}>履歴をすべて見る</Text>
+              <ArrowRightIcon color={color.inkMuted} />
             </HoverPressable>
           </Link>
         </View>
@@ -142,47 +151,52 @@ function createStyles(color: ColorTokens) {
       height: spacing.xxl,
       borderRadius: spacing.xxl,
       borderColor: color.hairline,
-      borderWidth: StyleSheet.hairlineWidth,
+      borderWidth: layout.borderWidth,
       alignItems: 'center',
       justifyContent: 'center',
     },
-    body: { ...typography.body, color: color.ink },
-    muted: { ...typography.body, color: color.inkMuted },
-    balance: { paddingVertical: spacing.xxl, gap: spacing.xs },
-    direction: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: spacing.sm },
-    balanceAmount: { ...typography.balance, ...typography.numbers, color: color.ink },
+    viewerInitial: { backgroundColor: color.surface },
+    viewerInitialLabel: { ...typography.small, fontWeight: typography.bodyMedium.fontWeight, color: color.ink },
+    partnerInitialLabel: { ...typography.small, color: color.inkMuted },
+    pairNames: { ...typography.label, color: color.inkMuted },
+    balance: { paddingTop: spacing.xl, paddingBottom: spacing.xl, gap: spacing.xs },
+    direction: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: spacing.xs },
+    directionLabel: { ...typography.bodyMedium, color: color.ink },
+    settledDirection: { ...typography.bodyMedium, color: color.inkMuted },
+    balanceAmount: { ...typography.balance, ...typography.numbers, color: color.ink, marginTop: spacing.xs },
     balanceRule: {
       width: spacing.xl,
       height: layout.balanceRuleHeight,
       borderRadius: spacing.xs,
       backgroundColor: color.accent,
+      marginTop: spacing.sm,
       marginBottom: spacing.xs,
     },
-    note: { ...typography.body, ...typography.numbers, color: color.inkMuted },
+    emptyTitle: { ...typography.heading, color: color.ink },
+    note: { ...typography.small, ...typography.numbers, color: color.inkMuted },
+    errorState: { paddingVertical: spacing.xl, gap: spacing.lg },
     error: { ...typography.body, color: color.danger },
-    actions: { gap: spacing.xl },
     recordActions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
-    retry: {
-      alignSelf: 'flex-start',
-      justifyContent: 'center',
-      minHeight: spacing.xxxl,
-      paddingHorizontal: spacing.xl,
-      backgroundColor: color.surface,
-      borderRadius: layout.buttonRadius,
-      borderColor: color.hairline,
-      borderWidth: StyleSheet.hairlineWidth,
+    recentSection: { marginTop: spacing.sm },
+    sectionHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.md,
+      marginBottom: spacing.xs,
     },
-    sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-    sectionLabel: { ...typography.small, color: color.inkMuted },
+    sectionLabel: { ...typography.label, color: color.inkMuted },
     sectionRule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: color.hairline },
-    pressed: { opacity: 0.8 },
+    pressed: { opacity: 0.78 },
     historyLinkHovered: { backgroundColor: color.surface },
+    historyLinkLabel: { ...typography.bodyMedium, color: color.ink },
     historyLink: {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       paddingVertical: spacing.md,
-      paddingLeft: spacing.md * 2,
+      marginHorizontal: -spacing.sm,
+      paddingLeft: spacing.md * 2 + spacing.sm,
+      paddingRight: spacing.sm,
       gap: spacing.md,
       minHeight: layout.rowMinHeight,
       borderTopColor: color.hairline,

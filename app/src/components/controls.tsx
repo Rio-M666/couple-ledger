@@ -28,6 +28,26 @@ export function useControlStyles() {
   return stylesByScheme[useThemeScheme()];
 }
 
+export function ArrowRightIcon({
+  color,
+  strokeWidth = layout.iconStroke,
+}: {
+  color: string;
+  strokeWidth?: number;
+}) {
+  return (
+    <View aria-hidden style={iconStyles.arrowBox}>
+      <View style={[iconStyles.arrowShaft, { backgroundColor: color, height: strokeWidth }]} />
+      <View
+        style={[
+          iconStyles.arrowHead,
+          { borderColor: color, borderTopWidth: strokeWidth, borderRightWidth: strokeWidth },
+        ]}
+      />
+    </View>
+  );
+}
+
 export function ChoiceGroup<Value extends string>({
   label,
   options,
@@ -46,18 +66,19 @@ export function ChoiceGroup<Value extends string>({
       {options.map(option => {
         const selected = option.value === value;
         return (
-          <Pressable
+          <HoverPressable
             key={option.value}
             accessibilityRole="button"
             accessibilityState={{ selected }}
             onPress={() => onChange(option.value)}
-            style={({ pressed }) => [
+            interactionStyle={({ pressed, hovered }) => [
               styles.choice,
+              hovered && !selected && styles.choiceHovered,
               selected && styles.selectedChoice,
-              pressed && styles.pressed,
+              pressed && styles.buttonPressed,
             ]}>
             <Text style={[styles.choiceLabel, selected && styles.selectedLabel]}>{option.label}</Text>
-          </Pressable>
+          </HoverPressable>
         );
       })}
     </View>
@@ -90,7 +111,13 @@ export function FieldInput({
   );
 }
 
-export function LedgerTextInput({ onFocus, onBlur, style, ...props }: TextInputProps) {
+export function LedgerTextInput({
+  onFocus,
+  onBlur,
+  style,
+  showFocusBorder = true,
+  ...props
+}: TextInputProps & { showFocusBorder?: boolean }) {
   const styles = useControlStyles();
   const [focused, setFocused] = useState(false);
 
@@ -105,12 +132,14 @@ export function LedgerTextInput({ onFocus, onBlur, style, ...props }: TextInputP
         setFocused(false);
         onBlur?.(event);
       }}
-      style={[style, focused && styles.focusedInput, webInputStyle]}
+      style={[style, showFocusBorder && focused && styles.focusedInput, webInputStyle]}
     />
   );
 }
 
-const webInputStyle: TextStyle | undefined = Platform.OS === 'web' ? { outlineWidth: 0 } : undefined;
+const webInputStyle: TextStyle | undefined = Platform.OS === 'web'
+  ? { outlineWidth: 0, outlineColor: 'transparent' }
+  : undefined;
 
 export function FieldError({ message, id }: { message?: string; id?: string }) {
   const styles = useControlStyles();
@@ -120,33 +149,57 @@ export function FieldError({ message, id }: { message?: string; id?: string }) {
   ) : null;
 }
 
-export function PrimaryButton({ label, onPress }: { label: string; onPress: () => void }) {
-  const styles = useControlStyles();
-
-  return (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}>
-      <Text style={styles.primaryLabel}>{label}</Text>
-    </Pressable>
-  );
-}
-
-export function SecondaryButton({ label, onPress, danger = false }: {
+export function PrimaryButton({
+  label,
+  onPress,
+  fullWidth = false,
+}: {
   label: string;
   onPress: () => void;
-  danger?: boolean;
+  fullWidth?: boolean;
 }) {
   const styles = useControlStyles();
 
   return (
-    <Pressable
+    <HoverPressable
       accessibilityRole="button"
       onPress={onPress}
-      style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}>
-      <Text style={[styles.body, danger && styles.dangerLabel]}>{label}</Text>
-    </Pressable>
+      interactionStyle={({ pressed, hovered }) => [
+        styles.primaryButton,
+        fullWidth && styles.fullWidthButton,
+        hovered && styles.primaryHovered,
+        pressed && styles.buttonPressed,
+      ]}>
+      <Text style={styles.primaryLabel}>{label}</Text>
+    </HoverPressable>
+  );
+}
+
+export function SecondaryButton({
+  label,
+  onPress,
+  danger = false,
+  fullWidth = false,
+}: {
+  label: string;
+  onPress: () => void;
+  danger?: boolean;
+  fullWidth?: boolean;
+}) {
+  const styles = useControlStyles();
+
+  return (
+    <HoverPressable
+      accessibilityRole="button"
+      onPress={onPress}
+      interactionStyle={({ pressed, hovered }) => [
+        styles.secondaryButton,
+        fullWidth && styles.fullWidthButton,
+        hovered && styles.secondaryHovered,
+        pressed && styles.buttonPressed,
+      ]}>
+      <Text style={[styles.secondaryLabel, danger && styles.dangerLabel]}>{label}</Text>
+    </HoverPressable>
   );
 }
 
@@ -154,40 +207,70 @@ export function Disclosure({
   label,
   expanded,
   onPress,
+  onSheet = false,
 }: {
   label: string;
   expanded: boolean;
   onPress: () => void;
+  onSheet?: boolean;
 }) {
   const styles = useControlStyles();
 
   return (
-    <Pressable
+    <HoverPressable
       accessibilityRole="button"
       accessibilityState={{ expanded }}
       onPress={onPress}
-      style={({ pressed }) => [styles.disclosure, pressed && styles.pressed]}>
-      <Text style={styles.body}>{label}</Text>
-      <View aria-hidden style={[styles.chevron, expanded && styles.chevronUp]} />
-    </Pressable>
+      interactionStyle={({ pressed, hovered }) => [
+        styles.disclosure,
+        hovered && (onSheet ? styles.disclosureHoveredOnSheet : styles.disclosureHovered),
+        pressed && styles.pressed,
+      ]}>
+      <Text style={styles.disclosureLabel}>{label}</Text>
+      <View aria-hidden style={styles.chevronBox}>
+        <View style={[styles.chevron, expanded ? styles.chevronUp : styles.chevronDown]} />
+      </View>
+    </HoverPressable>
   );
 }
+
+const iconStyles = StyleSheet.create({
+  arrowBox: {
+    width: spacing.lg,
+    height: spacing.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  arrowShaft: {
+    position: 'absolute',
+    left: 2,
+    right: 3,
+    borderRadius: 1,
+  },
+  arrowHead: {
+    position: 'absolute',
+    right: 3,
+    width: 7,
+    height: 7,
+    transform: [{ rotate: '45deg' }],
+  },
+});
 
 function createStyles(color: ColorTokens) {
   return StyleSheet.create({
     body: { ...typography.body, color: color.ink },
-    label: { ...typography.small, color: color.inkMuted },
+    label: { ...typography.label, color: color.inkMuted },
     field: { gap: spacing.xs },
     input: {
       ...typography.body,
       color: color.ink,
       backgroundColor: color.surface,
       borderColor: color.hairline,
-      borderWidth: StyleSheet.hairlineWidth,
+      borderWidth: layout.borderWidth,
       borderRadius: layout.inputRadius,
       minHeight: spacing.xxxl,
-      paddingHorizontal: spacing.md,
-      paddingVertical: spacing.sm,
+      paddingHorizontal: spacing.lg,
+      paddingVertical: spacing.md,
     },
     invalidInput: { borderColor: color.danger },
     focusedInput: { borderColor: color.accent },
@@ -197,26 +280,30 @@ function createStyles(color: ColorTokens) {
     choice: {
       minHeight: layout.choiceHeight,
       justifyContent: 'center',
-      paddingHorizontal: spacing.md,
+      alignItems: 'center',
+      paddingHorizontal: spacing.lg,
       paddingVertical: spacing.xs,
       backgroundColor: color.surface,
       borderRadius: layout.buttonRadius,
-      borderWidth: StyleSheet.hairlineWidth,
+      borderWidth: layout.borderWidth,
       borderColor: color.hairline,
     },
-    selectedChoice: { borderColor: color.ink },
+    choiceHovered: { borderColor: color.inkMuted },
+    selectedChoice: { backgroundColor: color.ink, borderColor: color.ink },
     choiceLabel: { ...typography.small, color: color.inkMuted },
-    selectedLabel: { color: color.ink, fontWeight: typography.heading.fontWeight },
+    selectedLabel: { color: color.bg, fontWeight: typography.heading.fontWeight },
     primaryButton: {
       alignSelf: 'flex-start',
       justifyContent: 'center',
       alignItems: 'center',
+      minWidth: layout.primaryButtonMinWidth,
       minHeight: spacing.xxxl,
       paddingHorizontal: spacing.xl,
       paddingVertical: spacing.md,
       borderRadius: layout.buttonRadius,
       backgroundColor: color.accent,
     },
+    primaryHovered: { opacity: 0.92 },
     primaryLabel: {
       ...typography.body,
       fontWeight: typography.heading.fontWeight,
@@ -225,34 +312,49 @@ function createStyles(color: ColorTokens) {
     secondaryButton: {
       alignSelf: 'flex-start',
       justifyContent: 'center',
+      alignItems: 'center',
       minHeight: spacing.xxxl,
       paddingHorizontal: spacing.lg,
-      paddingVertical: spacing.sm,
+      paddingVertical: spacing.md,
       borderRadius: layout.buttonRadius,
       backgroundColor: color.surface,
       borderColor: color.hairline,
-      borderWidth: StyleSheet.hairlineWidth,
+      borderWidth: layout.borderWidth,
     },
-    pressed: { opacity: 0.8 },
+    secondaryHovered: { borderColor: color.inkMuted },
+    secondaryLabel: { ...typography.bodyMedium, color: color.ink },
+    fullWidthButton: { alignSelf: 'stretch' },
+    pressed: { opacity: 0.78 },
+    buttonPressed: { opacity: 0.84, transform: [{ scale: 0.985 }] },
     disclosure: {
       minHeight: spacing.xxxl,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
       gap: spacing.sm,
+      marginHorizontal: -spacing.sm,
+      paddingHorizontal: spacing.sm,
       borderBottomColor: color.hairline,
       borderBottomWidth: StyleSheet.hairlineWidth,
+    },
+    disclosureHovered: { backgroundColor: color.surface },
+    disclosureHoveredOnSheet: { backgroundColor: color.bg },
+    disclosureLabel: { ...typography.bodyMedium, color: color.ink },
+    chevronBox: {
+      width: spacing.lg,
+      height: spacing.lg,
+      alignItems: 'center',
+      justifyContent: 'center',
     },
     chevron: {
       width: spacing.sm,
       height: spacing.sm,
-      marginRight: spacing.xs / 2,
-      borderRightWidth: 1.5,
-      borderBottomWidth: 1.5,
+      borderRightWidth: layout.iconStroke,
+      borderBottomWidth: layout.iconStroke,
       borderColor: color.inkMuted,
-      transform: [{ rotate: '45deg' }],
     },
-    chevronUp: { transform: [{ rotate: '225deg' }] },
+    chevronDown: { transform: [{ translateY: -2 }, { rotate: '45deg' }] },
+    chevronUp: { transform: [{ translateY: 2 }, { rotate: '225deg' }] },
   });
 }
 

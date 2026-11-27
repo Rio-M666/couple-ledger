@@ -70,7 +70,7 @@ export default function HistoryScreen() {
           <View style={styles.filterControls}>
             <Disclosure label="支払いの絞り込み" expanded={expanded} onPress={() => setExpanded(!expanded)} />
             {expanded && (
-              <>
+              <View style={styles.filterBody}>
                 <View style={styles.choiceField}>
                   <Text style={styles.label}>支払者</Text>
                   <ChoiceGroup
@@ -111,18 +111,25 @@ export default function HistoryScreen() {
                     containerStyle={styles.dateField}
                   />
                 </View>
-              </>
+              </View>
             )}
           </View>
         )}
       </View>
       {groups.length === 0 ? (
-        <View style={styles.searchControls}>
-          <Text accessibilityLiveRegion="polite" style={styles.empty}>
+        <View style={styles.emptyState}>
+          <Text accessibilityLiveRegion="polite" style={styles.emptyTitle}>
             {timeline.length === 0 ? 'まだ記録がありません' : '条件に一致する記録がありません'}
           </Text>
+          <Text style={styles.emptyNote}>
+            {timeline.length === 0
+              ? '最初の支払いを記録すると、ここに時系列で並びます。'
+              : '検索語や絞り込み条件を変えて試してください。'}
+          </Text>
           {timeline.length === 0 && (
-            <PrimaryButton label="支払いを追加" onPress={() => router.push('/expense/new')} />
+            <View style={styles.emptyAction}>
+              <PrimaryButton label="支払いを追加" onPress={() => router.push('/expense/new')} />
+            </View>
           )}
         </View>
       ) : (
@@ -130,7 +137,7 @@ export default function HistoryScreen() {
           {groups.map(({ date, items }) => (
             <View key={date}>
               <View style={styles.dateHeader}>
-                <Text accessibilityRole="header" style={styles.label}>{formatDateHeading(date, now)}</Text>
+                <Text accessibilityRole="header" style={styles.dateLabel}>{formatDateHeading(date, now)}</Text>
                 <View aria-hidden style={styles.dateRule} />
               </View>
               {items.map((item, index) => (
@@ -151,15 +158,36 @@ function rangeDateError(value: string) {
 function createStyles(color: ColorTokens) {
   return StyleSheet.create({
     title: { ...typography.screenTitle, color: color.ink },
-    label: { ...typography.small, color: color.inkMuted },
-    empty: { ...typography.body, color: color.inkMuted },
-    searchControls: { gap: spacing.md },
-    filterControls: { gap: spacing.lg },
-    choiceField: { gap: spacing.xs },
+    label: { ...typography.label, color: color.inkMuted },
+    dateLabel: { ...typography.label, ...typography.numbers, color: color.inkMuted },
+    searchControls: { gap: spacing.lg },
+    filterControls: { gap: spacing.md },
+    filterBody: {
+      gap: spacing.lg,
+      paddingTop: spacing.xs,
+      paddingBottom: spacing.lg,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: color.hairline,
+    },
+    choiceField: { gap: spacing.sm },
     dateRange: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
     dateField: { flexGrow: 1, flexBasis: spacing.xxxl * 3 },
-    timeline: { gap: spacing.lg },
-    dateHeader: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+    emptyState: {
+      paddingVertical: spacing.xxl,
+      gap: spacing.xs,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: color.hairline,
+    },
+    emptyTitle: { ...typography.bodyMedium, color: color.ink },
+    emptyNote: { ...typography.small, color: color.inkMuted },
+    emptyAction: { marginTop: spacing.md },
+    timeline: { gap: spacing.xl },
+    dateHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: spacing.md,
+      marginBottom: spacing.xs,
+    },
     dateRule: { flex: 1, height: StyleSheet.hairlineWidth, backgroundColor: color.hairline },
   });
 }

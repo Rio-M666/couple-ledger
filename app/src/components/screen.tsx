@@ -1,8 +1,9 @@
 import type { PropsWithChildren } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { colors, layout, spacing, typography, useThemeScheme } from '@/theme';
+import { HoverPressable } from '@/components/controls';
+import { colors, layout, spacing, typography, useThemeScheme, type ColorTokens } from '@/theme';
 
 export function Screen({ children, sheet = false }: PropsWithChildren<{ sheet?: boolean }>) {
   const color = colors[useThemeScheme()];
@@ -22,24 +23,50 @@ export function Screen({ children, sheet = false }: PropsWithChildren<{ sheet?: 
 }
 
 export function SheetHeader({ title, onClose }: { title: string; onClose: () => void }) {
-  const color = colors[useThemeScheme()];
+  const scheme = useThemeScheme();
+  const color = colors[scheme];
+  const headerStyles = headerStylesByScheme[scheme];
 
   return (
     <View style={styles.header}>
       <Text accessibilityRole="header" style={[styles.title, { color: color.ink }]}>{title}</Text>
-      <Pressable accessibilityRole="button" onPress={onClose} style={({ pressed }) => [styles.close, pressed && styles.pressed]}>
+      <HoverPressable
+        accessibilityRole="button"
+        onPress={onClose}
+        interactionStyle={({ pressed, hovered }) => [
+          styles.close,
+          hovered && headerStyles.closeHovered,
+          pressed && styles.pressed,
+        ]}>
         <Text style={[styles.closeLabel, { color: color.inkMuted }]}>閉じる</Text>
-      </Pressable>
+      </HoverPressable>
     </View>
   );
 }
 
+function createHeaderStyles(color: ColorTokens) {
+  return StyleSheet.create({
+    closeHovered: { backgroundColor: color.bg },
+  });
+}
+
+const headerStylesByScheme = {
+  light: createHeaderStyles(colors.light),
+  dark: createHeaderStyles(colors.dark),
+};
+
 const styles = StyleSheet.create({
-  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.md },
   title: { ...typography.screenTitle, flexShrink: 1 },
-  close: { minHeight: layout.choiceHeight, justifyContent: 'center', paddingLeft: spacing.lg },
-  pressed: { opacity: 0.8 },
-  closeLabel: typography.body,
+  close: {
+    minHeight: layout.choiceHeight,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+    marginRight: -spacing.md,
+    borderRadius: layout.inputRadius,
+  },
+  pressed: { opacity: 0.72 },
+  closeLabel: typography.bodyMedium,
   screen: { flex: 1 },
   scrollContent: { alignItems: 'center' },
   column: {
@@ -47,7 +74,7 @@ const styles = StyleSheet.create({
     maxWidth: layout.maxContentWidth,
     paddingHorizontal: layout.screenGutter,
     paddingTop: spacing.xl,
-    paddingBottom: spacing.xxl,
+    paddingBottom: spacing.xxxl,
     gap: spacing.xl,
   },
 });

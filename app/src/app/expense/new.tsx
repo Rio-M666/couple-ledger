@@ -20,7 +20,7 @@ import { balanceDirection, businessDate, formatShortDate, formatYen } from '@/da
 import { createExpense, linkedPromise, previewExpenseEdit, updateExpense, type RecordVersion } from '@/data/ledger';
 import type { ExpenseRecord, ExpenseType, MemberSlot, NewExpense } from '@/data/types';
 import { useLedger } from '@/hooks/use-ledger';
-import { colors, layout, spacing, typography, useThemeScheme, type ColorTokens } from '@/theme';
+import { colors, spacing, typography, useThemeScheme, type ColorTokens } from '@/theme';
 
 const expenseTypes = [
   { value: 'split', label: expenseTypeLabels.split },
@@ -176,15 +176,21 @@ function ExpenseForm({ expense }: { expense?: ExpenseRecord }) {
     return (
       <Screen key="review" sheet>
         <SheetHeader title="変更の影響を確認" onClose={() => setReview(undefined)} />
-        <View style={styles.details}>
-          <Text style={styles.previewBalance}>
-            {netBefore === netAfter ? `残高は ${afterAmount} のままです。`
-              : `残高が ${beforeAmount} → ${afterAmount} に変わります。`}
-          </Text>
-          {netAfter !== 0 && <Text style={styles.label}>{balanceDirection(netAfter, viewer.slot, partner.displayName)}</Text>}
-          <SummaryRow label="変更前" value={shareBreakdown(before)} styles={styles} />
-          <SummaryRow label="変更後" value={shareBreakdown(after)} styles={styles} />
-          {cancelsPromise && <Text style={styles.previewBalance}>種類を変更すると、紐づく約束も自動で取り消されます。</Text>}
+        <View style={styles.reviewBlock}>
+          <View style={styles.reviewLead}>
+            <Text style={styles.previewBalance}>
+              {netBefore === netAfter ? `残高は ${afterAmount} のままです。`
+                : `残高が ${beforeAmount} → ${afterAmount} に変わります。`}
+            </Text>
+            {netAfter !== 0 && <Text style={styles.label}>{balanceDirection(netAfter, viewer.slot, partner.displayName)}</Text>}
+          </View>
+          <View style={styles.summary}>
+            <SummaryRow label="変更前" value={shareBreakdown(before)} styles={styles} />
+            <SummaryRow label="変更後" value={shareBreakdown(after)} styles={styles} />
+          </View>
+          {cancelsPromise && (
+            <Text style={styles.warnNote}>種類を変更すると、紐づく約束も自動で取り消されます。</Text>
+          )}
         </View>
         <View style={styles.save}>
           <FieldError message={stale ? '記録が変わりました。もう一度変更内容を確認してください。' : saveError} />
@@ -232,7 +238,7 @@ function ExpenseForm({ expense }: { expense?: ExpenseRecord }) {
             </Text>
           )}
         </View>
-        <Disclosure label="詳細" expanded={expanded} onPress={() => setExpanded(!expanded)} />
+        <Disclosure label="詳細" expanded={expanded} onPress={() => setExpanded(!expanded)} onSheet />
       </View>
 
       {expanded && (
@@ -293,7 +299,7 @@ function ExpenseForm({ expense }: { expense?: ExpenseRecord }) {
       )}
 
       <View style={styles.save}>
-        <PrimaryButton label={expense ? '変更内容を確認' : '保存'} onPress={save} />
+        <PrimaryButton label={expense ? '変更内容を確認' : '保存'} onPress={save} fullWidth />
         <FieldError message={saveError} />
       </View>
     </Screen>
@@ -303,7 +309,7 @@ function ExpenseForm({ expense }: { expense?: ExpenseRecord }) {
 function SummaryRow({ label, value, styles }: { label: string; value: string; styles: ExpenseStyles }) {
   return (
     <View style={styles.summaryRow}>
-      <Text style={styles.label}>{label}</Text>
+      <Text style={styles.summaryLabel}>{label}</Text>
       <Text style={styles.summaryValue}>{value}</Text>
     </View>
   );
@@ -311,10 +317,13 @@ function SummaryRow({ label, value, styles }: { label: string; value: string; st
 
 function createStyles(color: ColorTokens) {
   return StyleSheet.create({
-    label: { ...typography.small, color: color.inkMuted },
+    label: { ...typography.label, color: color.inkMuted },
+    summaryLabel: { ...typography.small, color: color.inkMuted },
     summary: {
       gap: spacing.sm,
-      paddingBottom: spacing.md,
+      paddingVertical: spacing.md,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: color.hairline,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: color.hairline,
     },
@@ -324,14 +333,26 @@ function createStyles(color: ColorTokens) {
       justifyContent: 'space-between',
       gap: spacing.lg,
     },
-    summaryValue: { ...typography.body, ...typography.numbers, color: color.ink, flexShrink: 1, textAlign: 'right' },
-    sharePreview: { ...typography.body, ...typography.numbers, color: color.ink, textAlign: 'right' },
+    summaryValue: { ...typography.bodyMedium, ...typography.numbers, color: color.ink, flexShrink: 1, textAlign: 'right' },
+    sharePreview: {
+      ...typography.small,
+      ...typography.numbers,
+      color: color.inkMuted,
+      textAlign: 'right',
+      marginTop: spacing.xs,
+      paddingTop: spacing.sm,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: color.hairline,
+    },
     details: { gap: spacing.lg },
-    choiceField: { gap: spacing.xs },
-    promiseInput: { minHeight: layout.rowMinHeight, textAlignVertical: 'top' },
-    save: { gap: spacing.xs },
+    choiceField: { gap: spacing.sm },
+    promiseInput: { minHeight: spacing.xxxl + spacing.xl, paddingTop: spacing.md, textAlignVertical: 'top' },
+    save: { gap: spacing.sm, paddingTop: spacing.sm },
     actions: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md },
-    previewBalance: { ...typography.body, ...typography.numbers, color: color.ink },
+    reviewBlock: { gap: spacing.lg },
+    reviewLead: { gap: spacing.xs },
+    previewBalance: { ...typography.heading, ...typography.numbers, color: color.ink },
+    warnNote: { ...typography.small, color: color.warn },
   });
 }
 
